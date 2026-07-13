@@ -343,5 +343,19 @@ Setelah plan ini disetujui:
 **Catatan teknis Fase 2:**
 - SSH pakai model input via `tokio::sync::mpsc`: command sync (`session_write/resize`) kirim pesan ke IO task async yang memegang russh channel. Output russh → Tauri Channel.
 - Auth: password & private key (`load_secret_key` + `PrivateKeyWithHashAlg`).
+- Backend kripto russh pakai `ring` (bukan `aws-lc-rs`) — hindari masalah build toolchain C di Windows.
 - ⚠️ **Keamanan (TODO):** `check_server_key` masih `Ok(true)` (terima semua host key) → rawan MITM. Wajib diganti verifikasi known_hosts + prompt sebelum rilis.
 - Belum ada auto-reconnect / keepalive (penting untuk mobile nanti).
+
+### Fase 3 — Tabs + custom title bar ✅ SELESAI
+- ✅ Window frameless (`decorations: false`) + minWidth/minHeight
+- ✅ Izin window di `capabilities/default.json` (minimize/maximize/close/start-dragging)
+- ✅ `src/components/TitleBar.tsx` — tab strip + tombol `+` + area drag (`data-tauri-drag-region`) + kontrol window (SVG ⚊ ▢ ✕)
+- ✅ `App.tsx` — model multi-tab; semua tab tetap mounted (toggle `display`) → sesi tidak reset saat pindah tab
+- ✅ TerminalView — guard fit saat tab tersembunyi (ukuran 0)
+- ✅ Verifikasi manual: window controls, drag, buka/tutup/pindah tab, resize — semua jalan
+
+**Catatan teknis Fase 3:**
+- Backend tidak berubah — registry sesi sudah mendukung banyak sesi paralel; tiap tab = satu `SessionId`.
+- Tab tetap di-*mount* (display none/block) agar xterm & sesi PTY/SSH tidak mati saat pindah tab.
+- Middle-click / hover-✕ untuk menutup tab.

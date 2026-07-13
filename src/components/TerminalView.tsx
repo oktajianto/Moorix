@@ -74,6 +74,8 @@ export function TerminalView({ open }: { open: OpenSession }) {
     });
 
     const resizeObserver = new ResizeObserver(() => {
+      // Skip while hidden (e.g. background tab) — the container has zero size.
+      if (container.clientWidth === 0 || container.clientHeight === 0) return;
       fit.fit();
       if (sessionId) {
         void invoke("session_resize", {
