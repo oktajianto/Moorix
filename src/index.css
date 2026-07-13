@@ -2,6 +2,31 @@
 
 :root {
   color-scheme: dark;
+
+  /* App chrome (title bar, panels, launcher) — dark by default */
+  --m-bg: #0a0a0a;
+  --m-chrome: #171717;
+  --m-border: #262626;
+  --m-text: #e5e5e5;
+  --m-muted: #a3a3a3;
+  --m-panel: #171717;
+  --m-hover: #262626;
+  --m-input: #171717;
+  --m-input-border: #404040;
+}
+
+:root.light {
+  color-scheme: light;
+
+  --m-bg: #fafafa;
+  --m-chrome: #e5e5e5;
+  --m-border: #d1d5db;
+  --m-text: #1f2937;
+  --m-muted: #6b7280;
+  --m-panel: #ffffff;
+  --m-hover: #d4d4d4;
+  --m-input: #ffffff;
+  --m-input-border: #cbd5e1;
 }
 
 html,

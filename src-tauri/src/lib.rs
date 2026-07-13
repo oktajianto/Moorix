@@ -1,5 +1,6 @@
 mod commands;
 mod pty;
+mod secrets;
 mod ssh;
 mod state;
 
@@ -9,6 +10,7 @@ use state::AppState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::session_open,
@@ -16,6 +18,9 @@ pub fn run() {
             commands::session_write,
             commands::session_resize,
             commands::session_close,
+            secrets::secret_set,
+            secrets::secret_get,
+            secrets::secret_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

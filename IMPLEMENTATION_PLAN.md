@@ -359,3 +359,129 @@ Setelah plan ini disetujui:
 - Backend tidak berubah — registry sesi sudah mendukung banyak sesi paralel; tiap tab = satu `SessionId`.
 - Tab tetap di-*mount* (display none/block) agar xterm & sesi PTY/SSH tidak mati saat pindah tab.
 - Middle-click / hover-✕ untuk menutup tab.
+
+### Fase 4 — Welcome + Settings + Themes (verifikasi)
+- ✅ `src/themes.ts` — 6 tema (Moorix Dark, Dracula, One Dark, Solarized Dark, Tokyo Night, Light)
+- ✅ `src/settings.tsx` — Context + persist localStorage (fontSize, fontFamily, themeName, cursorBlink)
+- ✅ `src/components/Settings.tsx` — panel overlay (tema+swatch, font, size slider, cursor blink)
+- ✅ `src/components/Welcome.tsx` — first-launch (logo chevron Moorix sendiri, quick Dark/Light, Get started)
+- ✅ `TerminalView` — terapkan settings live (font/tema) tanpa merusak sesi (pakai refs)
+- ✅ `TitleBar` — tombol ⚙️; `main.tsx` — `SettingsProvider`; background area themable
+- ✅ Frontend build lolos
+- ⬜ Verifikasi manual (Welcome, ganti tema live, settings)
+
+**Catatan:** persist masih localStorage (MVP). Nanti pindah ke `tauri-plugin-store` agar konsisten lintas platform & lebih tahan.
+
+### Fase 5 — Profiles & Settings page ✅ (iterasi berjalan)
+- ✅ Chrome light/dark app-wide via CSS variables (`--m-*`), toggle class `.light` dari luminance tema
+- ✅ Ikon app dari logo transparan user (`logo-transparant.png`) → `tauri icon` (desktop/iOS/Android), di-embed ke exe
+- ✅ Logo user dipakai di Welcome
+- ✅ Ikon UI pakai **lucide-react** (bukan emoji): sidebar Settings, daftar profil, palette, launcher, title bar
+- ✅ **Quick-launch palette** (`ProfileMenu.tsx`) — tombol "Profiles & connections" setelah `+`; search + daftar profil + Manage profiles; keyboard ↑/↓/Enter/Esc
+- ✅ **Registry profil** (`profiles.ts`) — built-in (PowerShell, CMD, Git Bash, SSH) dipakai bersama palette & Settings
+- ✅ **Settings sebagai tab** (`SettingsPage.tsx`) gaya Tabby: sidebar (Application, Appearance, Profiles & connections, Terminal, Color scheme, Config sync, Hotkeys, Shell, SSH, Vault, Window, Config file — **tanpa Plugins**)
+  - Section **Profiles & connections → PROFILES**: Default profile selector, Filter, list berkelompok (Ungrouped / user groups / Built-in) dengan badge tipe
+  - **New profile Group**: dropdown New ▾ → popup nama → grup tersimpan (`tauri-plugin-store`, key `profileGroups`)
+  - Section **Color scheme** & **Terminal** (pindahan dari Settings lama); sisanya placeholder
+- ✅ **tauri-plugin-store** — dep Rust + JS, capability `store:default`, `moorix.json` (key: `defaultProfileId`, `profileGroups`)
+- ✅ Default profile → tombol `+` langsung buka profil default
+
+---
+
+## 17. Rancangan: New Profile & Profile Editor (SSH) — ⬜ BELUM DIBANGUN
+
+> Direkam atas permintaan user. **Jangan dibangun dulu** — menunggu screenshot sub-tab
+> yang belum ada (CIPHERS, COLORS, LOGIN SCRIPTS, INPUT). Fokus rancangan: **template SSH
+> sampai tab ADVANCED**.
+
+### 17.1 Alur "New profile"
+1. Settings → Profiles → **New ▾ → New profile**
+2. Muncul **palette pemilih template** (gaya quick-launch): judul *"Select a base profile to use as a template"*
+   - **Template**: Raw socket connection (Telnet), **SSH connection**, Serial connection, Telnet session
+   - **Duplicate an existing profile**: daftar profil yang ada (built-in + user) untuk diklon
+   - Keyboard ↑/↓ + Enter (baris teraktif badge `ENTER →`)
+3. Pilih template → buka **modal editor profil** sesuai tipe. (Fokus: SSH.)
+
+### 17.2 Editor Profil — kolom kiri (umum semua tipe)
+- **Name** (text)
+- **Group** (dropdown: Ungrouped + user groups)
+- **Icon** (Tabby: class FontAwesome `fas fa-desktop`. **Moorix: ganti ke picker ikon Lucide**)
+- **Color** (color picker, hex; default `#000000`)
+- **Disable dynamic tab title** (toggle) — "Connection name will be used instead"
+- **When a session ends** (Auto / …) — dropdown
+- **Clear terminal after connection** (toggle)
+
+### 17.3 Editor Profil SSH — kolom kanan (tab)
+Tab: **GENERAL · PORTS · ADVANCED · CIPHERS · COLORS · LOGIN SCRIPTS · INPUT** (semua terekam)
+
+**GENERAL:**
+- Connection: **Direct ▾** (direct / jump host)
+- **Host** (text) · **Port** (number, default 22)
+- **Username** (default `root`)
+- **Authentication method**: Auto · Password · Key · Agent · Interactive
+- **Password**: tombol "Set password" (simpan di keychain/vault)
+- **Private keys**: "Add a private key"
+
+**PORTS:**
+- **Add a port forward**: `bindAddr:bindPort → host:port` + Description
+- Tipe: **Local · Remote · Dynamic**, tombol "Forward port"
+- Daftar forward yang sudah ditambah
+
+**ADVANCED:**
+- X11 forwarding (toggle) · Agent forwarding (toggle)
+- Skip MoTD/banner (toggle) · Reuse session for multiple tabs (toggle)
+- Keep Alive Interval ms (default 5000) · Max Keep Alive Count (default 10) · Ready Timeout ms (default 20000)
+
+**CIPHERS:** daftar checkbox per kategori (✓ = default aktif). Meniru default OpenSSH/libssh Tabby.
+- **Ciphers:** none, `aes128-ctr`✓, `aes192-ctr`✓, `aes256-ctr`✓, aes128-gcm@openssh.com, `aes256-gcm@openssh.com`✓, aes128-cbc, aes192-cbc, aes256-cbc, `chacha20-poly1305@openssh.com`✓
+- **Key exchange:** `mlkem768x25519-sha256`✓, `curve25519-sha256`✓, `curve25519-sha256@libssh.org`✓, dh-group-exchange-sha1, dh-group-exchange-sha256, dh-group1-sha1, dh-group14-sha1, `dh-group14-sha256`✓, dh-group15-sha512, `dh-group16-sha512`✓, dh-group17-sha512, dh-group18-sha512, ecdh-sha2-nistp256/384/521
+- **HMAC:** `hmac-sha1`✓, `hmac-sha2-256`✓, `hmac-sha2-512`✓, `hmac-sha1-etm`✓, `hmac-sha2-256-etm`✓, `hmac-sha2-512-etm`✓
+- **Host key:** ssh-dss, `ecdsa-sha2-nistp256`✓, ecdsa-sha2-nistp384, `ecdsa-sha2-nistp521`✓, `ssh-ed25519`✓, `ssh-rsa`✓, `rsa-sha2-256`✓, `rsa-sha2-512`✓, sk-ecdsa-…@openssh.com, sk-ssh-ed25519@openssh.com
+- **Compression:** zlib@openssh.com, zlib, `none`✓
+
+**COLORS:** pemilih **color scheme khusus profil** (override tema global) — daftar scrollable, tiap item menampilkan **preview terminal live** (`john@doe-pc$ ls …`). Contoh skema: Arthur, AtelierSulphurpool, Atom, AtomOneLight, ayu, ayu_light, Base16 Default Dark, base2tone-{cave,desert,drawbridge,evening,forest,heath}-dark, … (banyak, ala iTerm2). *(Implementasi awal: pakai daftar tema Moorix + preview; koleksi iTerm2 menyusul.)*
+
+**LOGIN SCRIPTS:** tabel automasi expect/send saat login.
+- Kolom: **Expect** | **Send** | aksi
+- Tombol **+ New item** menambah baris
+- Per baris: dropdown (ikon gear) mode cocok **Exact match / Regex / Optional** + tombol hapus (trash)
+
+**INPUT:**
+- **Backspace key mode**: Pass-through / Ctrl-H / Ctrl-? / Delete (CSI 3~)
+
+Footer: **Save** / **Cancel**.
+
+### 17.5 Implikasi backend untuk CIPHERS & COLORS
+- **CIPHERS** → `russh::client::Config.preferred` (`Preferred { kex, cipher, mac, key, compression }`). russh 0.62 mendukung set algoritma pilihan → **feasible**; perlu mapping nama UI → tipe russh, dan validasi mana yang didukung `ring` backend.
+- **COLORS** → override tema xterm **per-sesi** (independen dari tema global app). Murni frontend; perlu pustaka skema warna (impor koleksi iTerm2 seperti Tabby).
+
+---
+
+## 18. Penyimpanan kredensial (secret storage)
+
+**Abstraksi:** 3 command Tauri — `secret_set(id, password)` / `secret_get(id)` / `secret_delete(id)`.
+Frontend & editor SSH **tidak tahu** implementasinya → implementasi bisa beda per platform tanpa
+mengubah frontend. Password **tidak pernah** disimpan di store (`moorix.json`); hanya id profil yang direferensikan.
+
+**Desktop (✅ terpasang):** crate `keyring` 3 → Windows Credential Manager / macOS Keychain / Linux Secret Service. Tanpa master password. Service = `moorix`, account = profile id.
+
+**Mobile (⬜ Fase 7):** implement command yang sama di balik `#[cfg(mobile)]`:
+- **Android:** plugin Tauri (Kotlin) → **EncryptedSharedPreferences** (di-back Android Keystore)
+- **iOS:** **Keychain Services** (Security.framework) via plugin/Swift bridge
+
+**Alternatif (ditolak untuk sekarang):** unify ke `tauri-plugin-stronghold` (satu vault lintas platform) — konsisten tapi butuh master password tiap sesi. Bisa ditinjau ulang bila platform-native mobile terlalu ribet.
+
+### Update Fase 5 — profil SSH user
+- ✅ `NewProfilePicker` (template: SSH aktif; Serial/Telnet/Raw disabled)
+- ✅ `ProfileEditor` — editor SSH 7 tab (GENERAL/PORTS/ADVANCED/CIPHERS/COLORS/LOGIN SCRIPTS/INPUT) + kolom kiri (Name/Group/Icon Lucide/Color/toggles)
+- ✅ Profil user tersimpan di store (`userProfiles`), tampil di list (Ungrouped/grup) + palette, bisa edit/hapus/launch
+- ✅ Password → OS keychain (`keyring`), diambil saat connect; strip dari store
+- ⚠️ PORTS/ADVANCED/CIPHERS: UI + tersimpan, **backend russh belum menerapkan** (host/port/user/auth yang aktif). COLORS pakai tema Moorix + preview.
+
+### 17.4 Implikasi data & backend (catatan penting)
+- Profil SSH user disimpan di `tauri-plugin-store` (metadata). ⚠️ **Password → stronghold/keychain, bukan store plaintext** (fitur keamanan menyusul).
+- Launch profil SSH → `ssh_open` dengan config tersimpan.
+- **Backend russh saat ini belum mendukung:** port forwarding, keep-alive, X11/agent forwarding, ciphers kustom, jump host. Field-field ini akan disimpan dulu; dukungan backend menyusul (perlu kerja di `ssh.rs`).
+- Model `Profile` perlu diperluas: simpan `options` per tipe (host/port/user/auth/forwards/advanced…).
+
+**Status:** rancangan tercatat. Implementasi menunggu screenshot sub-tab tersisa + konfirmasi user.

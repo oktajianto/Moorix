@@ -1,4 +1,8 @@
+import { useState } from "react";
+import { Settings as SettingsIcon, PanelsTopLeft } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ProfileMenu } from "./ProfileMenu";
+import type { Profile, UserProfile } from "../profiles";
 
 const appWindow = getCurrentWindow();
 
@@ -13,18 +17,35 @@ type Props = {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNewTab: () => void;
+  onOpenSettings: () => void;
+  onLaunchProfile: (profile: Profile) => void;
+  onManageProfiles: () => void;
+  userProfiles: UserProfile[];
+  onLaunchUserProfile: (profile: UserProfile) => void;
 };
 
 /**
  * Custom frameless title bar: tab strip + new-tab button + draggable spacer +
- * window controls. The OS decorations are disabled (`decorations: false`), so
- * this bar is the only chrome.
+ * window controls. Colors follow the app chrome CSS variables (light/dark).
  */
-export function TitleBar({ tabs, activeId, onSelect, onClose, onNewTab }: Props) {
+export function TitleBar({
+  tabs,
+  activeId,
+  onSelect,
+  onClose,
+  onNewTab,
+  onOpenSettings,
+  onLaunchProfile,
+  onManageProfiles,
+  userProfiles,
+  onLaunchUserProfile,
+}: Props) {
+  const [profilesOpen, setProfilesOpen] = useState(false);
   return (
     <div
       data-tauri-drag-region
-      className="flex h-9 shrink-0 select-none items-stretch border-b border-neutral-800 bg-neutral-900"
+      className="flex h-9 shrink-0 select-none items-stretch border-b"
+      style={{ background: "var(--m-chrome)", borderColor: "var(--m-border)" }}
     >
       <div className="flex items-stretch overflow-x-auto">
         {tabs.map((tab, i) => {
@@ -36,20 +57,21 @@ export function TitleBar({ tabs, activeId, onSelect, onClose, onNewTab }: Props)
               onAuxClick={(e) => {
                 if (e.button === 1) onClose(tab.id); // middle-click closes
               }}
-              className={`group flex w-44 shrink-0 items-center gap-2 border-r border-neutral-800 px-3 text-xs ${
-                active
-                  ? "bg-[#0a0a0a] text-neutral-100"
-                  : "text-neutral-400 hover:bg-neutral-800"
-              }`}
+              className="group flex w-44 shrink-0 items-center gap-2 border-r px-3 text-xs"
+              style={{
+                borderColor: "var(--m-border)",
+                background: active ? "var(--m-bg)" : "transparent",
+                color: active ? "var(--m-text)" : "var(--m-muted)",
+              }}
             >
-              <span className="text-[10px] text-neutral-600">{i + 1}</span>
+              <span className="text-[10px] opacity-60">{i + 1}</span>
               <span className="flex-1 truncate">{tab.label}</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onClose(tab.id);
                 }}
-                className="rounded p-0.5 text-neutral-500 opacity-0 transition hover:bg-neutral-700 hover:text-neutral-100 group-hover:opacity-100"
+                className="rounded p-0.5 opacity-0 transition hover:bg-black/20 group-hover:opacity-100"
                 title="Close tab"
               >
                 <CloseIcon />
@@ -60,18 +82,41 @@ export function TitleBar({ tabs, activeId, onSelect, onClose, onNewTab }: Props)
 
         <button
           onClick={onNewTab}
-          className="px-3 text-lg leading-none text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-100"
+          className="px-3 text-lg leading-none transition hover:bg-black/10"
+          style={{ color: "var(--m-muted)" }}
           title="New tab"
         >
           +
         </button>
+
+        <button
+          onClick={() => setProfilesOpen((v) => !v)}
+          className="flex items-center px-2 transition hover:bg-black/10"
+          style={{ color: "var(--m-muted)" }}
+          title="Profiles &amp; connections"
+        >
+          <PanelsTopLeft className="h-[15px] w-[15px]" />
+        </button>
       </div>
+
+      {profilesOpen && (
+        <ProfileMenu
+          onClose={() => setProfilesOpen(false)}
+          onLaunchProfile={onLaunchProfile}
+          onManageProfiles={onManageProfiles}
+          userProfiles={userProfiles}
+          onLaunchUserProfile={onLaunchUserProfile}
+        />
+      )}
 
       {/* Draggable empty area */}
       <div data-tauri-drag-region className="flex-1" />
 
-      {/* Window controls */}
+      {/* Settings + window controls */}
       <div className="flex items-stretch">
+        <WindowButton onClick={onOpenSettings} title="Settings">
+          <SettingsIcon className="h-[15px] w-[15px]" />
+        </WindowButton>
         <WindowButton onClick={() => appWindow.minimize()} title="Minimize">
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1" />
@@ -108,8 +153,9 @@ function WindowButton({
     <button
       onClick={onClick}
       title={title}
-      className={`flex w-11 items-center justify-center text-neutral-400 transition hover:text-white ${
-        danger ? "hover:bg-red-600" : "hover:bg-neutral-700"
+      style={{ color: "var(--m-muted)" }}
+      className={`flex w-11 items-center justify-center transition hover:text-white ${
+        danger ? "hover:bg-red-600" : "hover:bg-black/10"
       }`}
     >
       {children}
