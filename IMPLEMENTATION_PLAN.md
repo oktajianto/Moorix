@@ -344,7 +344,7 @@ Setelah plan ini disetujui:
 - SSH pakai model input via `tokio::sync::mpsc`: command sync (`session_write/resize`) kirim pesan ke IO task async yang memegang russh channel. Output russh → Tauri Channel.
 - Auth: password & private key (`load_secret_key` + `PrivateKeyWithHashAlg`).
 - Backend kripto russh pakai `ring` (bukan `aws-lc-rs`) — hindari masalah build toolchain C di Windows.
-- ⚠️ **Keamanan (TODO):** `check_server_key` masih `Ok(true)` (terima semua host key) → rawan MITM. Wajib diganti verifikasi known_hosts + prompt sebelum rilis.
+- ✅ **Keamanan (host key) — SELESAI:** `check_server_key` sekarang TOFU: known & cocok → terima; known & berubah → tolak + event `host-key-mismatch`; unknown → prompt frontend (`host-key-prompt`) tampilkan fingerprint SHA256, tunggu keputusan via `host_key_decision`. Disimpan di `known_hosts.json` (app config dir). Bridge: `AppState.pending_host_keys` (oneshot).
 - Belum ada auto-reconnect / keepalive (penting untuk mobile nanti).
 
 ### Fase 3 — Tabs + custom title bar ✅ SELESAI
@@ -476,7 +476,8 @@ mengubah frontend. Password **tidak pernah** disimpan di store (`moorix.json`); 
 - ✅ `ProfileEditor` — editor SSH 7 tab (GENERAL/PORTS/ADVANCED/CIPHERS/COLORS/LOGIN SCRIPTS/INPUT) + kolom kiri (Name/Group/Icon Lucide/Color/toggles)
 - ✅ Profil user tersimpan di store (`userProfiles`), tampil di list (Ungrouped/grup) + palette, bisa edit/hapus/launch
 - ✅ Password → OS keychain (`keyring`), diambil saat connect; strip dari store
-- ⚠️ PORTS/ADVANCED/CIPHERS: UI + tersimpan, **backend russh belum menerapkan** (host/port/user/auth yang aktif). COLORS pakai tema Moorix + preview.
+- ✅ **Diterapkan ke backend russh:** CIPHERS (`Config.preferred` via `parse_names` + `TryFrom<&str>`, fallback default per kategori bila kosong), **keep-alive** (`keepalive_interval`/`keepalive_max`), **ready timeout** (`tokio::time::timeout` saat connect).
+- ⬜ **Belum diterapkan (ditunda):** PORTS (port forwarding local/remote/dynamic), X11/agent forwarding, skip banner, reuse session (multiplexing), LOGIN SCRIPTS (expect/send), INPUT backspace mode. COLORS per-sesi = item #3.
 
 ### 17.4 Implikasi data & backend (catatan penting)
 - Profil SSH user disimpan di `tauri-plugin-store` (metadata). ⚠️ **Password → stronghold/keychain, bukan store plaintext** (fitur keamanan menyusul).

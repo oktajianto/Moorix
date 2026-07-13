@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use tokio::sync::oneshot;
+
 use crate::pty::PtySession;
 use crate::ssh::SshSession;
 
@@ -41,12 +43,29 @@ impl Session {
 pub struct AppState {
     sessions: Mutex<HashMap<String, Session>>,
     counter: AtomicU64,
+    host_key_counter: AtomicU64,
+    pending_host_keys: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
 }
 
 impl AppState {
     pub fn next_id(&self) -> String {
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
         format!("s{n}")
+    }
+
+    /// Register a pending host-key confirmation; returns its id and a receiver
+    /// that resolves once the frontend calls `host_key_decision`.
+    pub fn register_host_key_prompt(&self) -> (u64, oneshot::Receiver<bool>) {
+        let id = self.host_key_counter.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending_host_keys.lock().unwrap().insert(id, tx);
+        (id, rx)
+    }
+
+    pub fn resolve_host_key(&self, id: u64, accept: bool) {
+        if let Some(tx) = self.pending_host_keys.lock().unwrap().remove(&id) {
+            let _ = tx.send(accept);
+        }
     }
 
     pub fn insert(&self, id: String, session: Session) {

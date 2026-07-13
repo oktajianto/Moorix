@@ -1,5 +1,5 @@
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::pty::PtySession;
 use crate::ssh::{SshConfig, SshSession};
@@ -24,16 +24,23 @@ pub fn session_open(
 /// Open a new SSH session and start an interactive shell on the remote host.
 #[tauri::command]
 pub async fn ssh_open(
+    app: AppHandle,
     state: State<'_, AppState>,
     on_data: Channel<Vec<u8>>,
     config: SshConfig,
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
-    let session = SshSession::connect(config, cols, rows, on_data).await?;
+    let session = SshSession::connect(app, config, cols, rows, on_data).await?;
     let id = state.next_id();
     state.insert(id.clone(), Session::Ssh(session));
     Ok(id)
+}
+
+/// Frontend's answer to a `host-key-prompt` event.
+#[tauri::command]
+pub fn host_key_decision(state: State<AppState>, id: u64, accept: bool) {
+    state.resolve_host_key(id, accept);
 }
 
 #[tauri::command]

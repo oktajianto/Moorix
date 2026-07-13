@@ -225,7 +225,22 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
       );
       auth = { type: "password", password: stored ?? s.password ?? "" };
     }
-    const config = { host: s.host, port: s.port, username: s.username, auth };
+    const config = {
+      host: s.host,
+      port: s.port,
+      username: s.username,
+      auth,
+      keepAliveInterval: s.advanced.keepAliveInterval,
+      keepAliveMax: s.advanced.maxKeepAliveCount,
+      readyTimeout: s.advanced.readyTimeout,
+      ciphers: {
+        ciphers: s.ciphers.ciphers,
+        kex: s.ciphers.kex,
+        hmac: s.ciphers.hmac,
+        hostKey: s.ciphers.hostKey,
+        compression: s.ciphers.compression,
+      },
+    };
     return invoke<string>("ssh_open", { onData: channel, config, cols, rows });
   };
 }

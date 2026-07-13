@@ -18,6 +18,7 @@ pub fn run() {
             commands::session_write,
             commands::session_resize,
             commands::session_close,
+            commands::host_key_decision,
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,

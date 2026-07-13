@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/TitleBar";
+import { HostKeyPrompt, type HostKeyReq } from "./components/HostKeyPrompt";
 import { TerminalView, type OpenSession } from "./components/TerminalView";
 import { Launcher } from "./components/Launcher";
 import { SettingsPage } from "./components/SettingsPage";
@@ -45,6 +47,8 @@ function App() {
   const [groups, setGroups] = useState<string[]>([]);
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>([]);
   const [editor, setEditor] = useState<EditorIntent | null>(null);
+  const [hostKeyReqs, setHostKeyReqs] = useState<HostKeyReq[]>([]);
+  const [mismatch, setMismatch] = useState<{ host: string; fingerprint: string } | null>(null);
   const [showWelcome, setShowWelcome] = useState(
     () => !localStorage.getItem(WELCOME_KEY),
   );
@@ -55,6 +59,28 @@ function App() {
       isLightTheme(settings.themeName),
     );
   }, [settings.themeName]);
+
+  useEffect(() => {
+    const p1 = listen<HostKeyReq>("host-key-prompt", (e) =>
+      setHostKeyReqs((prev) =>
+        prev.some((r) => r.id === e.payload.id) ? prev : [...prev, e.payload],
+      ),
+    );
+    const p2 = listen<{ host: string; fingerprint: string }>(
+      "host-key-mismatch",
+      (e) => setMismatch(e.payload),
+    );
+    return () => {
+      void p1.then((un) => un());
+      void p2.then((un) => un());
+    };
+  }, []);
+
+  const decideHostKey = (accept: boolean) => {
+    const req = hostKeyReqs[0];
+    if (req) void invoke("host_key_decision", { id: req.id, accept }).catch(() => {});
+    setHostKeyReqs((prev) => prev.slice(1));
+  };
 
   useEffect(() => {
     getStore()
@@ -275,6 +301,39 @@ function App() {
           onSave={onEditorSave}
           onCancel={() => setEditor(null)}
         />
+      )}
+
+      {hostKeyReqs[0] && (
+        <HostKeyPrompt req={hostKeyReqs[0]} onDecision={decideHostKey} />
+      )}
+
+      {mismatch && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+          <div
+            className="w-full max-w-md rounded-xl border p-6"
+            style={{ background: "var(--m-panel)", borderColor: "var(--m-border)" }}
+          >
+            <h2 className="mb-2 text-lg font-semibold text-red-400">
+              ⚠ Host key changed
+            </h2>
+            <p className="text-sm" style={{ color: "var(--m-text)" }}>
+              The host key for <b>{mismatch.host}</b> does not match the one saved
+              earlier. The connection was rejected — this may indicate a
+              man-in-the-middle attack.
+            </p>
+            <p className="mt-2 break-all text-xs" style={{ color: "var(--m-muted)" }}>
+              New fingerprint: {mismatch.fingerprint}
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={() => setMismatch(null)}
+                className="rounded-md bg-neutral-700 px-4 py-2 text-sm text-white transition hover:bg-neutral-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
