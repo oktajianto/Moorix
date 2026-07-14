@@ -65,13 +65,14 @@ pub struct SshSession {
 impl SshSession {
     pub async fn connect(
         app: AppHandle,
+        id: String,
         cfg: SshConfig,
         cols: u16,
         rows: u16,
         on_data: Channel<Vec<u8>>,
     ) -> Result<Self, String> {
         let handler = ClientHandler {
-            app,
+            app: app.clone(),
             host: cfg.host.clone(),
             port: cfg.port,
         };
@@ -163,6 +164,9 @@ impl SshSession {
         tauri::async_runtime::spawn(async move {
             // Keep the connection handle alive for as long as the task runs.
             let handle = handle;
+            // Whether the loop exited because the remote/transport dropped (vs.
+            // the user closing the session, which drops the input sender).
+            let mut dropped = false;
             loop {
                 tokio::select! {
                     msg = channel.wait() => match msg {
@@ -176,7 +180,10 @@ impl SshSession {
                                 break;
                             }
                         }
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                            dropped = true;
+                            break;
+                        }
                         _ => {}
                     },
                     input = rx.recv() => match input {
@@ -186,9 +193,16 @@ impl SshSession {
                         Some(SshInput::Resize { cols, rows }) => {
                             let _ = channel.window_change(cols as u32, rows as u32, 0, 0).await;
                         }
+                        // Input sender dropped → session was removed by the user.
                         None => break,
                     },
                 }
+            }
+
+            // Tell the frontend so it can offer/trigger auto-reconnect. Only on
+            // an unexpected drop — a user close is not a reconnect candidate.
+            if dropped {
+                let _ = app.emit("session-ended", serde_json::json!({ "id": id }));
             }
 
             let _ = handle

@@ -3,7 +3,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/TitleBar";
 import { HostKeyPrompt, type HostKeyReq } from "./components/HostKeyPrompt";
-import { TerminalView, type OpenSession, type TermOptions } from "./components/TerminalView";
+import {
+  type OpenSession,
+  type TermOptions,
+  disposePane,
+} from "./components/TerminalView";
+import { Panes } from "./components/SplitPane";
+import {
+  makeLeaf,
+  splitLeaf,
+  closeLeaf,
+  setSizesAtPath,
+  firstLeaf,
+  findLeaf,
+  allLeaves,
+  type PaneNode,
+} from "./paneTree";
 import { Launcher } from "./components/Launcher";
 import { SettingsPage } from "./components/SettingsPage";
 import { ProfileEditor } from "./components/ProfileEditor";
@@ -11,7 +26,7 @@ import { Welcome } from "./components/Welcome";
 import { useSettings } from "./settings";
 import { getTheme, isLightTheme } from "./themes";
 import {
-  BUILTIN_PROFILES,
+  AVAILABLE_BUILTINS,
   localOpen,
   sshOpenFromProfile,
   newSshProfile,
@@ -32,7 +47,7 @@ import { getStore, setValue } from "./store";
 
 type Tab =
   | { id: string; kind: "launcher" }
-  | { id: string; kind: "terminal"; label: string; open: OpenSession; options?: TermOptions }
+  | { id: string; kind: "terminal"; root: PaneNode }
   | { id: string; kind: "settings" };
 
 let counter = 1;
@@ -45,6 +60,7 @@ function App() {
   const { settings } = useSettings();
   const [tabs, setTabs] = useState<Tab[]>([{ id: FIRST_ID, kind: "launcher" }]);
   const [activeId, setActiveId] = useState(FIRST_ID);
+  const [activePaneId, setActivePaneId] = useState("");
   const [defaultProfileId, setDefaultProfileId] = useState("");
   const [groups, setGroups] = useState<string[]>([]);
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>([]);
@@ -156,8 +172,10 @@ function App() {
   const openTerminalTab = (open: OpenSession, label: string, options?: TermOptions) => {
     dismissWelcome();
     const id = nextId();
-    setTabs((prev) => [...prev, { id, kind: "terminal", label, open, options }]);
+    const leaf = makeLeaf(label, open, options);
+    setTabs((prev) => [...prev, { id, kind: "terminal", root: leaf }]);
     setActiveId(id);
+    setActivePaneId(leaf.paneId);
   };
 
   const launchProfile = (p: Profile) => {
@@ -174,7 +192,7 @@ function App() {
     openTerminalTab(sshOpenFromProfile(p), profileLabel(p), termOptionsOf(p));
 
   const newTab = () => {
-    const def = BUILTIN_PROFILES.find((p) => p.id === defaultProfileId);
+    const def = AVAILABLE_BUILTINS.find((p) => p.id === defaultProfileId);
     if (def) {
       launchProfile(def);
       return;
@@ -200,12 +218,60 @@ function App() {
   const launchInTab =
     (tabId: string) => (open: OpenSession, label: string, options?: TermOptions) => {
       dismissWelcome();
+      const leaf = makeLeaf(label, open, options);
       setTabs((prev) =>
         prev.map((tab) =>
-          tab.id === tabId ? { id: tabId, kind: "terminal", label, open, options } : tab,
+          tab.id === tabId ? { id: tabId, kind: "terminal", root: leaf } : tab,
         ),
       );
+      setActivePaneId(leaf.paneId);
     };
+
+  // --- Split-pane operations (within a terminal tab) ---------------------------
+
+  const splitPane = (tabId: string, paneId: string, dir: "row" | "col") => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "terminal") return;
+    const leaf = findLeaf(tab.root, paneId);
+    if (!leaf) return;
+    // A split duplicates the pane's profile: reuse its open closure + options,
+    // spawning a fresh independent backend session.
+    const clone = makeLeaf(leaf.label, leaf.open, leaf.options);
+    const root = splitLeaf(tab.root, paneId, dir, clone);
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...tab, root } : t)));
+    setActivePaneId(clone.paneId);
+  };
+
+  const closePane = (tabId: string, paneId: string) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.kind !== "terminal") return;
+    const root = closeLeaf(tab.root, paneId);
+    if (!root) {
+      closeTab(tabId); // last pane closed → close the whole tab (disposes it)
+      return;
+    }
+    disposePane(paneId); // free the removed pane's session/terminal
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...tab, root } : t)));
+    if (activePaneId === paneId) setActivePaneId(firstLeaf(root).paneId);
+  };
+
+  const resizePane = (tabId: string, path: number[], sizes: number[]) => {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId && t.kind === "terminal"
+          ? { ...t, root: setSizesAtPath(t.root, path, sizes) }
+          : t,
+      ),
+    );
+  };
+
+  const selectTab = (id: string) => {
+    setActiveId(id);
+    const tab = tabs.find((t) => t.id === id);
+    if (tab?.kind === "terminal" && !findLeaf(tab.root, activePaneId)) {
+      setActivePaneId(firstLeaf(tab.root).paneId);
+    }
+  };
 
   const onEditorSave = (p: UserProfile) => {
     saveProfile(p);
@@ -218,6 +284,10 @@ function App() {
   };
 
   const closeTab = (id: string) => {
+    const closing = tabs.find((t) => t.id === id);
+    if (closing?.kind === "terminal") {
+      for (const leaf of allLeaves(closing.root)) disposePane(leaf.paneId);
+    }
     const idx = tabs.findIndex((t) => t.id === id);
     let next = tabs.filter((t) => t.id !== id);
     if (next.length === 0) {
@@ -231,7 +301,11 @@ function App() {
   };
 
   const labelOf = (t: Tab) =>
-    t.kind === "terminal" ? t.label : t.kind === "settings" ? "Settings" : "New tab";
+    t.kind === "terminal"
+      ? (findLeaf(t.root, activePaneId) ?? firstLeaf(t.root)).label
+      : t.kind === "settings"
+        ? "Settings"
+        : "New tab";
 
   const bg = getTheme(settings.themeName).background ?? "#0a0a0a";
 
@@ -243,7 +317,7 @@ function App() {
       <TitleBar
         tabs={tabs.map((t) => ({ id: t.id, label: labelOf(t) }))}
         activeId={activeId}
-        onSelect={setActiveId}
+        onSelect={selectTab}
         onClose={closeTab}
         onNewTab={newTab}
         onOpenSettings={openSettings}
@@ -257,8 +331,15 @@ function App() {
         {tabs.map((tab) => (
           <div
             key={tab.id}
-            className={`absolute inset-0 ${tab.kind === "terminal" ? "p-2" : ""}`}
-            style={{ display: tab.id === activeId ? "block" : "none" }}
+            className={`absolute inset-0 ${tab.kind === "terminal" ? "p-1.5" : ""}`}
+            style={{
+              display:
+                tab.id === activeId
+                  ? tab.kind === "terminal"
+                    ? "flex"
+                    : "block"
+                  : "none",
+            }}
           >
             {tab.kind === "launcher" ? (
               <Launcher
@@ -291,7 +372,14 @@ function App() {
                 onDeleteProfile={deleteProfile}
               />
             ) : (
-              <TerminalView open={tab.open} options={tab.options} />
+              <Panes
+                node={tab.root}
+                activePaneId={activePaneId}
+                onFocusPane={setActivePaneId}
+                onSplit={(paneId, dir) => splitPane(tab.id, paneId, dir)}
+                onClosePane={(paneId) => closePane(tab.id, paneId)}
+                onResize={(path, sizes) => resizePane(tab.id, path, sizes)}
+              />
             )}
           </div>
         ))}

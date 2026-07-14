@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FolderCog, type LucideIcon } from "lucide-react";
 import {
-  BUILTIN_PROFILES,
+  AVAILABLE_BUILTINS,
   subtitleOf,
   badgeOf,
   iconByName,
@@ -50,7 +50,7 @@ export function ProfileMenu({
       badge: "SSH",
       run: () => onLaunchUserProfile(up),
     }));
-    const builtins: Entry[] = BUILTIN_PROFILES.map((p) => ({
+    const builtins: Entry[] = AVAILABLE_BUILTINS.map((p) => ({
       id: p.id,
       name: p.name,
       subtitle: subtitleOf(p),

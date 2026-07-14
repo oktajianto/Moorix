@@ -23,7 +23,7 @@ import {
 import { useSettings } from "../settings";
 import { THEME_NAMES, getTheme } from "../themes";
 import {
-  BUILTIN_PROFILES,
+  AVAILABLE_BUILTINS,
   subtitleOf,
   badgeOf,
   iconByName,
@@ -145,10 +145,10 @@ function ProfilesSection({
     (u.name || "").toLowerCase().includes(q) ||
     `${u.ssh.username}@${u.ssh.host}`.toLowerCase().includes(q);
   const builtin = q
-    ? BUILTIN_PROFILES.filter(
+    ? AVAILABLE_BUILTINS.filter(
         (p) => p.name.toLowerCase().includes(q) || subtitleOf(p).toLowerCase().includes(q),
       )
-    : BUILTIN_PROFILES;
+    : AVAILABLE_BUILTINS;
 
   const inGroup = (g: string) => userProfiles.filter((u) => u.group === g && matchUser(u));
   const ungrouped = userProfiles.filter(
@@ -191,7 +191,7 @@ function ProfilesSection({
           style={inputStyle}
         >
           <option value="">Ask every time</option>
-          {BUILTIN_PROFILES.map((p) => (
+          {AVAILABLE_BUILTINS.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>

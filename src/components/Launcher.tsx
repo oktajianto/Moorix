@@ -1,6 +1,7 @@
 import { Monitor, Plug } from "lucide-react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { OpenSession } from "./TerminalView";
+import { IS_MOBILE } from "../platform";
 
 type Props = {
   onLaunch: (open: OpenSession, label: string) => void;
@@ -29,13 +30,15 @@ export function Launcher({ onLaunch, onSshConnection }: Props) {
         </p>
 
         <div className="flex flex-col gap-3">
-          <button
-            onClick={launchLocal}
-            className="inline-flex items-center justify-center gap-2 rounded-md border px-4 py-3 text-sm font-medium transition hover:border-cyan-500"
-            style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
-          >
-            <Monitor className="h-4 w-4" /> Local shell
-          </button>
+          {!IS_MOBILE && (
+            <button
+              onClick={launchLocal}
+              className="inline-flex items-center justify-center gap-2 rounded-md border px-4 py-3 text-sm font-medium transition hover:border-cyan-500"
+              style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+            >
+              <Monitor className="h-4 w-4" /> Local shell
+            </button>
+          )}
           <button
             onClick={onSshConnection}
             className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-cyan-500"

@@ -4,11 +4,13 @@ use std::sync::Mutex;
 
 use tokio::sync::oneshot;
 
+#[cfg(desktop)]
 use crate::pty::PtySession;
 use crate::ssh::SshSession;
 
 /// A terminal session — either a local PTY (desktop only) or an SSH connection.
 pub enum Session {
+    #[cfg(desktop)]
     Pty(PtySession),
     Ssh(SshSession),
 }
@@ -16,6 +18,7 @@ pub enum Session {
 impl Session {
     fn write(&mut self, data: &[u8]) -> Result<(), String> {
         match self {
+            #[cfg(desktop)]
             Session::Pty(s) => s.write(data),
             Session::Ssh(s) => s.write(data),
         }
@@ -23,6 +26,7 @@ impl Session {
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
         match self {
+            #[cfg(desktop)]
             Session::Pty(s) => s.resize(cols, rows),
             Session::Ssh(s) => s.resize(cols, rows),
         }
@@ -30,6 +34,7 @@ impl Session {
 
     fn kill(&mut self) {
         match self {
+            #[cfg(desktop)]
             Session::Pty(s) => s.kill(),
             // Dropping the SshSession (on removal) closes the input channel,
             // which stops the IO task and disconnects.

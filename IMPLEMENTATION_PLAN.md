@@ -183,10 +183,10 @@ Moorix/
 - [ ] Tab management (buka/tutup/pindah)
 - [ ] 1 tema default + font monospace
 - [ ] Settings dasar (font size, tema)
-- [ ] Mobile build jalan dengan SSH-only
+- [x] Mobile build jalan dengan SSH-only (Android APK; SSH-only, local shell di-gate)
 
 ### v0.2+
-- [ ] Split pane
+- [x] Split pane
 - [ ] Profile/connection manager (simpan host, port, user, key)
 - [ ] Secure credential store (stronghold)
 - [ ] Banyak tema + import tema (format iTerm2)
@@ -385,6 +385,59 @@ Setelah plan ini disetujui:
   - Section **Color scheme** & **Terminal** (pindahan dari Settings lama); sisanya placeholder
 - ✅ **tauri-plugin-store** — dep Rust + JS, capability `store:default`, `moorix.json` (key: `defaultProfileId`, `profileGroups`)
 - ✅ Default profile → tombol `+` langsung buka profil default
+
+### Fase 6 — Split pane ✅ SELESAI
+- ✅ `src/paneTree.ts` — model tree pane per-tab (`PaneLeaf` / `PaneSplit` dir `row`/`col`, `sizes` fraksi) + helper murni: `makeLeaf`, `splitLeaf`, `closeLeaf` (collapse split 1-anak → renormalisasi sisa), `setSizesAtPath`, `findLeaf`/`firstLeaf`/`allLeaves`
+- ✅ `src/components/SplitPane.tsx` — renderer rekursif `Panes` (flexbox: `flexGrow`=size, `flexBasis:0`) + `Divider` draggable (pointer events, hitung fraksi dari lebar/tinggi parent, clamp `MIN_PANE` 0.08) + toolbar hover per-pane (split right/down/close, ikon lucide `SquareSplit*`)
+- ✅ **Sesi tidak mati saat split** — `TerminalView` di-refaktor pakai **pool modul** (`POOL: Map<paneId, PaneEntry>`): xterm + sesi backend hidup di luar mount React; saat tree berubah (leaf→split) DOM xterm di-*reparent* (`appendChild`), bukan dibuat ulang. Sesi hanya ditutup lewat `disposePane()` yang dipanggil App saat pane/tab benar-benar ditutup.
+- ✅ `App.tsx` — tab terminal kini pegang `root: PaneNode` (bukan single terminal); state `activePaneId` (outline `--m-accent`), handler `splitPane`/`closePane`/`resizePane`, `closeTab` & `closePane` panggil `disposePane` untuk tiap leaf yang dibuang. Split = duplikat profil pane (reuse `open` closure → sesi baru independen).
+- ✅ `--m-accent` ditambah ke `index.css` (dark/light) untuk highlight pane aktif
+- ✅ Frontend build lolos (`pnpm build`)
+- ✅ **Verifikasi** (harness browser, karena app penuh butuh runtime Tauri): split right/down + nested → layout benar; **pool preservation** — node xterm original bertahan identik melintasi split/close (sesi shell aman); divider drag proporsional presisi; close → collapse ke sibling + renormalisasi size. Plus 21 unit test murni `paneTree` lolos.
+
+**Catatan teknis Fase 6:**
+- "Layout persist" diartikan **selama sesi** (drag/re-render menjaga proporsi). Persist lintas restart app **tidak** dilakukan: sesi terminal bersifat ephemeral (PTY/SSH live), menyimpan layout tanpa sesi tak bermakna.
+- Auto-close pane saat shell exit **belum** ada (sama seperti tab: backend belum emit event akhir sesi) → pane ditutup manual via tombol. Follow-up bareng auto-reconnect (Fase 7).
+- `allotment` (disebut di §4) **tidak dipakai** — splitter kustom ringan dipilih agar dependensi minim (prinsip "binari kecil") & hindari risiko peer-dep React 19.
+
+### Fase 7 — Mobile (bagian A: kode mobile-ready) ✅ SELESAI
+> Scope sesi ini = **menyiapkan kode agar mobile-compilable & SSH-only**, TANPA `tauri android init`/build APK (butuh set env + JDK, ditunda). iOS di luar jangkauan (butuh macOS).
+
+- ✅ **Gate backend desktop-only** (`#[cfg(desktop)]`):
+  - `Cargo.toml` — `portable-pty` & `keyring` dipindah ke `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]` (tak ikut ter-compile di mobile)
+  - `lib.rs` — `mod pty` di-gate desktop; `state.rs` — varian `Session::Pty` + lengan match di-gate; `commands.rs` — `session_open` badan desktop (PTY) / mobile (return `Err` "local shell not available")
+- ✅ **Secret store split** (`secrets.rs`): desktop = OS keychain (`keyring`); mobile = in-memory session-only (placeholder aman; native EncryptedSharedPreferences/Keychain menyusul). Surface command `secret_set/get/delete` tetap sama.
+- ✅ **plugin-os** — dep Rust `tauri-plugin-os` + JS `@tauri-apps/plugin-os`, registrasi di `lib.rs`, capability `os:default`. `src/platform.ts` → `IS_MOBILE` (deteksi `platform()`, fallback desktop di luar Tauri).
+- ✅ **Frontend SSH-only di mobile**: `AVAILABLE_BUILTINS` menyaring profil `type:"local"` saat mobile → dipakai di `App` (default), `SettingsPage` (list+selector), `ProfileMenu` (palette). `Launcher` sembunyikan tombol "Local shell" di mobile.
+- ✅ **SSH auto-reconnect + keepalive**:
+  - keepalive sudah ada sejak Fase 5 (`config.keepalive_interval`/`keepalive_max`)
+  - backend `ssh.rs` — emit `session-ended {id}` saat koneksi **putus tak terduga** (channel Eof/Close/None), bukan saat user tutup. Id di-assign di `ssh_open` sebelum `connect`.
+  - frontend `TerminalView` — listener `session-ended`: pane dgn `sessionId` cocok & `reconnect:true` → reconnect otomatis **exponential backoff** (1s→15s, maks 5x) pakai channel & xterm yang sama (pool); reset saat sukses. **Initial connect gagal tidak** auto-retry. `TermOptions.reconnect=true` utk semua profil SSH.
+- ✅ **Verifikasi**: `cargo check` (desktop) + `pnpm build`/`tsc` lolos; `pnpm tauri dev` boot bersih (window jalan, tanpa panic).
+
+**Belum dikerjakan (bagian B, menyusul):**
+- ~~`tauri android init` + build `.apk`~~ → ✅ **SELESAI** (lihat bagian B di bawah)
+- ⬜ Native mobile secret store (Android EncryptedSharedPreferences / iOS Keychain).
+- ⬜ iOS (butuh macOS + Xcode).
+
+### Fase 7 — Mobile (bagian B: Android build) ✅ SELESAI
+> Toolchain lokal: Android SDK+NDK sudah ada; JDK dipakai dari **JBR bawaan Android Studio**
+> (`%LOCALAPPDATA%\Programs\Android Studio\jbr`, JDK 21). Env di-set **session-only** (tidak
+> dipermanenkan di Windows atas permintaan user).
+
+- ✅ `rustup target add` 4 ABI: `aarch64/armv7/i686/x86_64-linux-android`
+- ✅ Env (session): `ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk`, `NDK_HOME=…\ndk\28.2.13676358`, `JAVA_HOME=…\Android Studio\jbr`
+- ✅ `pnpm tauri android init` → proyek Gradle di `src-tauri/gen/android` (namespace/appId `com.moorix.app`, minSdk 24, targetSdk 36)
+- ✅ **Cross-compile terbukti**: `libmoorix_lib.so` (arm64-v8a) ter-build → **gating `#[cfg(mobile)]` Fase 7A tervalidasi end-to-end** (PTY & keyring benar-benar tidak ikut compile di Android)
+- ✅ **APK jadi**: `app-universal-debug.apk` (debug, arm64-v8a). Kendala Windows: symlink `.so` → jniLibs butuh **Developer Mode** ON (bukan masalah kode); setelah ON, Gradle assemble sukses.
+- ✅ **git**: `gen/android` **di-commit** (proyek Android bisa dikustom). `.gitignore` bawaan Tauri sudah mengabaikan artefak build (`build/`, `.gradle`, `jniLibs/**/*.so`, `local.properties`) + kredensial (`keystore.properties`, `key.properties`). Repo `target/` juga di-ignore.
+- ✅ **Release signing disiapkan**: `app/build.gradle.kts` diberi `signingConfigs.release` yang membaca `keystore.properties` (gitignored). Template committed: `keystore.properties.example`. **Keystore + password digenerate user sendiri** (`keytool`), tidak di-commit ke repo publik ini.
+
+**Catatan / menyusul:**
+- ⬜ Release APK ter-signing nyata (menunggu user generate keystore via `keytool` + isi `keystore.properties`), lalu `pnpm tauri android build --apk`.
+- ⬜ Uji jalan di HP/emulator (`pnpm tauri android dev`) — bukti SSH di Android.
+- ⚠️ NDK 28 dipakai; sempat ada exception **Kotlin daemon** saat Gradle build tapi auto-fallback "compile without daemon" → build tetap sukses. Pantau bila berulang (`./gradlew --stop`).
+- Ikon app diganti ke `icon-logo-saja.png` via `tauri icon` (regen desktop/iOS/Android). Logo di dalam app (`src/assets/moorix-logo.png`) masih terpisah.
 
 ---
 

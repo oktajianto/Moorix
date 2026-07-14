@@ -13,6 +13,7 @@
   --m-hover: #262626;
   --m-input: #171717;
   --m-input-border: #404040;
+  --m-accent: #3b82f6;
 }
 
 :root.light {
@@ -27,6 +28,7 @@
   --m-hover: #d4d4d4;
   --m-input: #ffffff;
   --m-input-border: #cbd5e1;
+  --m-accent: #2563eb;
 }
 
 html,

@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { OpenSession, TermOptions } from "./components/TerminalView";
+import { IS_MOBILE } from "./platform";
 
 export type ProfileType = "local" | "ssh";
 
@@ -33,6 +34,12 @@ export const BUILTIN_PROFILES: Profile[] = [
   { id: "gitbash", name: "Git Bash", type: "local", group: "Built-in", Icon: GitBranch, color: "#f97316", command: "C:\\Program Files\\Git\\bin\\bash.exe" },
   { id: "ssh", name: "SSH connection", type: "ssh", group: "Built-in", Icon: Plug, color: "#22d3ee" },
 ];
+
+/** Built-in profiles available on the current platform. Mobile is SSH-only, so
+ *  local shells (PowerShell/CMD/Git Bash) are hidden there. */
+export const AVAILABLE_BUILTINS: Profile[] = IS_MOBILE
+  ? BUILTIN_PROFILES.filter((p) => p.type !== "local")
+  : BUILTIN_PROFILES;
 
 export function subtitleOf(p: Profile): string {
   return p.command ?? "New SSH session";
@@ -276,5 +283,6 @@ export function termOptionsOf(p: UserProfile): TermOptions {
     colorScheme: p.ssh.colorScheme,
     backspaceMode: p.ssh.backspaceMode,
     loginScripts: p.ssh.loginScripts,
+    reconnect: true, // SSH sessions auto-reconnect on an unexpected drop
   };
 }
