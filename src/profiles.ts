@@ -285,6 +285,15 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
         hostKey: s.ciphers.hostKey,
         compression: s.ciphers.compression,
       },
+      // Port forwards (PORTS tab). Local/Dynamic are applied; Remote is ignored
+      // by the backend for now.
+      forwards: s.ports.map((f) => ({
+        type: f.type,
+        bindHost: f.bindHost,
+        bindPort: f.bindPort,
+        host: f.host,
+        port: f.port,
+      })),
     };
     return invoke<string>("ssh_open", { onData: channel, config, cols, rows });
   };

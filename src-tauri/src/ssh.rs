@@ -31,6 +31,24 @@ pub struct SshConfig {
     ready_timeout: Option<u64>,
     #[serde(default)]
     ciphers: Option<CipherPrefs>,
+    #[serde(default)]
+    forwards: Vec<ForwardSpec>,
+}
+
+/// One port-forward entry from a profile's PORTS tab. Ports arrive as strings
+/// (the form stores them that way) and are parsed when the forward is started.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardSpec {
+    #[serde(rename = "type")]
+    kind: String, // "local" | "remote" | "dynamic"
+    #[serde(default)]
+    bind_host: String,
+    bind_port: String,
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    port: String,
 }
 
 #[derive(Deserialize)]
@@ -57,9 +75,19 @@ enum SshInput {
 }
 
 /// A live SSH session. Owning it means owning the input side of the IO task;
-/// dropping it (or removing it from the registry) tears the session down.
+/// dropping it (or removing it from the registry) tears the session down and
+/// aborts any port-forward listeners.
 pub struct SshSession {
     input: UnboundedSender<SshInput>,
+    forwards: Vec<tauri::async_runtime::JoinHandle<()>>,
+}
+
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        for task in &self.forwards {
+            task.abort();
+        }
+    }
 }
 
 impl SshSession {
@@ -159,11 +187,51 @@ impl SshSession {
             .await
             .map_err(|e| e.to_string())?;
 
+        // Share the handle: the shell task and every port-forward open channels
+        // on it. `Handle` isn't `Sync` (it owns a receiver), so it lives behind
+        // a mutex, only locked briefly to open each channel.
+        let handle = Arc::new(tokio::sync::Mutex::new(handle));
+
+        // Start the configured port forwards. Local/Dynamic work purely from the
+        // client side; Remote (-R) is a follow-up (needs server channel handling).
+        let mut forwards = Vec::new();
+        for f in &cfg.forwards {
+            let bind_host = if f.bind_host.trim().is_empty() {
+                "127.0.0.1".to_string()
+            } else {
+                f.bind_host.trim().to_string()
+            };
+            let Ok(bind_port) = f.bind_port.trim().parse::<u16>() else {
+                continue;
+            };
+            match f.kind.as_str() {
+                "local" => {
+                    let Ok(dest_port) = f.port.trim().parse::<u16>() else {
+                        continue;
+                    };
+                    let h = handle.clone();
+                    let dest_host = f.host.trim().to_string();
+                    forwards.push(tauri::async_runtime::spawn(async move {
+                        crate::forward::run_local(h, bind_host, bind_port, dest_host, dest_port)
+                            .await;
+                    }));
+                }
+                "dynamic" => {
+                    let h = handle.clone();
+                    forwards.push(tauri::async_runtime::spawn(async move {
+                        crate::forward::run_dynamic(h, bind_host, bind_port).await;
+                    }));
+                }
+                _ => {} // "remote" and unknown kinds: not yet supported
+            }
+        }
+
         let (tx, mut rx) = unbounded_channel::<SshInput>();
 
+        let shell_handle = handle.clone();
         tauri::async_runtime::spawn(async move {
             // Keep the connection handle alive for as long as the task runs.
-            let handle = handle;
+            let handle = shell_handle;
             // Whether the loop exited because the remote/transport dropped (vs.
             // the user closing the session, which drops the input sender).
             let mut dropped = false;
@@ -206,11 +274,13 @@ impl SshSession {
             }
 
             let _ = handle
+                .lock()
+                .await
                 .disconnect(Disconnect::ByApplication, "", "en")
                 .await;
         });
 
-        Ok(Self { input: tx })
+        Ok(Self { input: tx, forwards })
     }
 
     pub fn write(&self, data: &[u8]) -> Result<(), String> {

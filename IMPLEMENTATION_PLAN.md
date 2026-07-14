@@ -194,7 +194,7 @@ Moorix/
 - [x] Serial & Telnet (Serial desktop-only; Telnet cross-platform) — via Launcher quick-connect
 
 ### Lanjutan (v1.0+)
-- [ ] SSH port forwarding (local/remote/dynamic)
+- [~] SSH port forwarding — Local (-L) & Dynamic (-D/SOCKS5) ✅; Remote (-R) ⬜
 - [ ] SFTP file browser
 - [ ] Sync profil antar device (terenkripsi)
 - [ ] Plugin system
@@ -451,6 +451,22 @@ Setelah plan ini disetujui:
 - Serial/Telnet lewat **Launcher quick-connect**, belum jadi **saved profile** — template Serial/Telnet di `NewProfilePicker` masih disabled (butuh profile-editor per-tipe, ikut rancangan §17).
 - Serial resize & Telnet NAWS di-no-op-kan (MVP).
 
+### Fase 9 — Advanced: SSH Port Forwarding (iterasi 1) ✅ Local + Dynamic
+> Fase 9 = keranjang (port forwarding / SFTP / sync / plugin / jump host). Iterasi 1
+> fokus **port forwarding**, dimulai dari yang paling nyambung ke SSH yang sudah ada.
+
+- ✅ `src-tauri/src/forward.rs` — forwarding sisi client via `direct-tcpip`:
+  - **Local (-L)** `run_local`: `TcpListener` di `bindHost:bindPort` → tiap koneksi buka `channel_open_direct_tcpip(host, port)` → `copy_bidirectional(socket, channel.into_stream())`.
+  - **Dynamic (-D)** `run_dynamic`: proxy **SOCKS5** (no-auth, CONNECT) → parse ATYP IPv4/domain/IPv6 → tunnel via `direct-tcpip`. Parser alamat + 4 unit test.
+- ✅ `ssh.rs` — `Handle` di-share via `Arc<tokio::Mutex<Handle>>` (Handle bukan `Sync`/`Clone`; method `channel_open_direct_tcpip`/`disconnect` `&self`). Config `forwards: Vec<ForwardSpec>` (dari tab PORTS profil, port sebagai string → di-parse). `SshSession` simpan `JoinHandle` listener + `Drop` meng-abort (stop saat sesi tutup). Forward otomatis **re-establish saat auto-reconnect** (karena `sshOpenFromProfile` mengirim `forwards`).
+- ✅ Frontend: `sshOpenFromProfile` kirim `forwards` (map dari `ssh.ports`). **UI tab PORTS sudah ada** sejak Fase 5 → tinggal jalan.
+- ✅ **Verifikasi**: `cargo check` lolos; **4 unit test parser SOCKS** (IPv4/domain/IPv6/length salah) + 8 telnet = 12 lolos; `pnpm build` lolos.
+
+**Catatan Fase 9:**
+- **Remote (-R) belum** — butuh `ClientHandler` menerima channel `forwarded-tcpip` (+ global request `tcpip-forward`). Iterasi berikutnya.
+- **End-to-end belum diuji** (butuh SSH server + service target + UI Tauri native). Cara uji manual: profil SSH → tab PORTS → tambah Local forward (mis. `127.0.0.1:8080 → localhost:80`) → connect → buka `localhost:8080`. Dynamic: set browser SOCKS5 ke `127.0.0.1:<bindPort>`.
+- Error bind (port kepakai) saat ini hanya di-log backend (`eprintln`), belum ada toast UI.
+
 ---
 
 ## 17. Rancangan: New Profile & Profile Editor (SSH) — ⬜ BELUM DIBANGUN
@@ -549,7 +565,7 @@ mengubah frontend. Password **tidak pernah** disimpan di store (`moorix.json`); 
   - **COLORS** — `ssh.colorScheme` override tema xterm per-sesi (independen tema global; kosong = ikut global). Tetap override walau tema global berubah.
   - **INPUT** — backspace mode remap keystroke (`attachCustomKeyEventHandler`): ctrl-h→`\x08`, delete→CSI `\x1b[3~`, passthrough/ctrl-?→default DEL `\x7f`.
   - **LOGIN SCRIPTS** — automasi expect/send atas output stream (`runLoginScripts`): match exact/regex/optional (ANSI di-strip), kirim `send + \r`; step required blocking, optional bisa dilewati.
-- ⬜ **Belum diterapkan (butuh kerja russh, bukan transport baru):** PORTS (port forwarding local/remote/dynamic), X11/agent forwarding, skip banner, reuse session (multiplexing).
+- ⬜ **Belum diterapkan (butuh kerja russh, bukan transport baru):** PORTS Remote (-R) forwarding, X11/agent forwarding, skip banner, reuse session (multiplexing). *(PORTS Local & Dynamic ✅ — lihat Fase 9.)*
 
 ### 17.4 Implikasi data & backend (catatan penting)
 - Profil SSH user disimpan di `tauri-plugin-store` (metadata). ⚠️ **Password → stronghold/keychain, bukan store plaintext** (fitur keamanan menyusul).

@@ -1,4 +1,5 @@
 mod commands;
+mod forward;
 #[cfg(desktop)]
 mod pty;
 mod secrets;
