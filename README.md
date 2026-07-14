@@ -2,7 +2,7 @@
 
 Cross-platform terminal & SSH client — built with **Tauri 2**.
 
-Terinspirasi Tabby, dengan satu codebase yang menjangkau **desktop dan mobile**.
+Satu codebase yang menjangkau **desktop dan mobile**.
 
 | Platform | Local shell | SSH / Telnet / Serial |
 |---|---|---|

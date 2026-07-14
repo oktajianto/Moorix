@@ -1,7 +1,7 @@
 # Moorix — Implementation Plan
 
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
-> Terinspirasi Tabby, tapi dengan satu codebase yang menjangkau desktop **dan** mobile.
+> Satu codebase yang menjangkau desktop **dan** mobile.
 
 Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-13
 
@@ -16,7 +16,7 @@ Moorix adalah aplikasi terminal modern lintas platform:
 
 Prinsip desain:
 - **Satu core codebase**, perbedaan platform di-*gate* dengan `#[cfg(desktop)]` / `#[cfg(mobile)]` di sisi Rust dan feature-flag di frontend.
-- **Reuse xterm.js** untuk rendering terminal (sama seperti Tabby) → tampilan konsisten & matang.
+- **Reuse xterm.js** untuk rendering terminal → tampilan konsisten & matang.
 - **Performa native** lewat backend Rust (russh, portable-pty), binari kecil.
 
 ---
@@ -189,7 +189,7 @@ Moorix/
 - [ ] Split pane
 - [ ] Profile/connection manager (simpan host, port, user, key)
 - [ ] Secure credential store (stronghold)
-- [ ] Banyak tema + import tema (iTerm/Tabby format)
+- [ ] Banyak tema + import tema (format iTerm2)
 - [ ] Keybinding kustom
 - [ ] Serial & Telnet (desktop)
 
@@ -379,7 +379,7 @@ Setelah plan ini disetujui:
 - ✅ Ikon UI pakai **lucide-react** (bukan emoji): sidebar Settings, daftar profil, palette, launcher, title bar
 - ✅ **Quick-launch palette** (`ProfileMenu.tsx`) — tombol "Profiles & connections" setelah `+`; search + daftar profil + Manage profiles; keyboard ↑/↓/Enter/Esc
 - ✅ **Registry profil** (`profiles.ts`) — built-in (PowerShell, CMD, Git Bash, SSH) dipakai bersama palette & Settings
-- ✅ **Settings sebagai tab** (`SettingsPage.tsx`) gaya Tabby: sidebar (Application, Appearance, Profiles & connections, Terminal, Color scheme, Config sync, Hotkeys, Shell, SSH, Vault, Window, Config file — **tanpa Plugins**)
+- ✅ **Settings sebagai tab** (`SettingsPage.tsx`) ber-sidebar: Application, Appearance, Profiles & connections, Terminal, Color scheme, Config sync, Hotkeys, Shell, SSH, Vault, Window, Config file
   - Section **Profiles & connections → PROFILES**: Default profile selector, Filter, list berkelompok (Ungrouped / user groups / Built-in) dengan badge tipe
   - **New profile Group**: dropdown New ▾ → popup nama → grup tersimpan (`tauri-plugin-store`, key `profileGroups`)
   - Section **Color scheme** & **Terminal** (pindahan dari Settings lama); sisanya placeholder
@@ -405,7 +405,7 @@ Setelah plan ini disetujui:
 ### 17.2 Editor Profil — kolom kiri (umum semua tipe)
 - **Name** (text)
 - **Group** (dropdown: Ungrouped + user groups)
-- **Icon** (Tabby: class FontAwesome `fas fa-desktop`. **Moorix: ganti ke picker ikon Lucide**)
+- **Icon** (picker ikon Lucide)
 - **Color** (color picker, hex; default `#000000`)
 - **Disable dynamic tab title** (toggle) — "Connection name will be used instead"
 - **When a session ends** (Auto / …) — dropdown
@@ -432,7 +432,7 @@ Tab: **GENERAL · PORTS · ADVANCED · CIPHERS · COLORS · LOGIN SCRIPTS · INP
 - Skip MoTD/banner (toggle) · Reuse session for multiple tabs (toggle)
 - Keep Alive Interval ms (default 5000) · Max Keep Alive Count (default 10) · Ready Timeout ms (default 20000)
 
-**CIPHERS:** daftar checkbox per kategori (✓ = default aktif). Meniru default OpenSSH/libssh Tabby.
+**CIPHERS:** daftar checkbox per kategori (✓ = default aktif). Default mengikuti OpenSSH/libssh.
 - **Ciphers:** none, `aes128-ctr`✓, `aes192-ctr`✓, `aes256-ctr`✓, aes128-gcm@openssh.com, `aes256-gcm@openssh.com`✓, aes128-cbc, aes192-cbc, aes256-cbc, `chacha20-poly1305@openssh.com`✓
 - **Key exchange:** `mlkem768x25519-sha256`✓, `curve25519-sha256`✓, `curve25519-sha256@libssh.org`✓, dh-group-exchange-sha1, dh-group-exchange-sha256, dh-group1-sha1, dh-group14-sha1, `dh-group14-sha256`✓, dh-group15-sha512, `dh-group16-sha512`✓, dh-group17-sha512, dh-group18-sha512, ecdh-sha2-nistp256/384/521
 - **HMAC:** `hmac-sha1`✓, `hmac-sha2-256`✓, `hmac-sha2-512`✓, `hmac-sha1-etm`✓, `hmac-sha2-256-etm`✓, `hmac-sha2-512-etm`✓
@@ -453,7 +453,7 @@ Footer: **Save** / **Cancel**.
 
 ### 17.5 Implikasi backend untuk CIPHERS & COLORS
 - **CIPHERS** → `russh::client::Config.preferred` (`Preferred { kex, cipher, mac, key, compression }`). russh 0.62 mendukung set algoritma pilihan → **feasible**; perlu mapping nama UI → tipe russh, dan validasi mana yang didukung `ring` backend.
-- **COLORS** → override tema xterm **per-sesi** (independen dari tema global app). Murni frontend; perlu pustaka skema warna (impor koleksi iTerm2 seperti Tabby).
+- **COLORS** → override tema xterm **per-sesi** (independen dari tema global app). Murni frontend; perlu pustaka skema warna (impor koleksi iTerm2).
 
 ---
 
