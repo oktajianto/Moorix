@@ -50,8 +50,21 @@ export function badgeOf(p: Profile): string | null {
 }
 
 export function localOpen(command: string): OpenSession {
+  // An empty command means "use the OS default shell" (backend picks it).
   return (channel: Channel<number[]>, cols, rows) =>
-    invoke<string>("session_open", { onData: channel, cols, rows, shell: command });
+    invoke<string>("session_open", { onData: channel, cols, rows, shell: command || null });
+}
+
+/** Open a local serial port (desktop only). Serial has no cols/rows. */
+export function serialOpen(path: string, baud: number): OpenSession {
+  return (channel: Channel<number[]>) =>
+    invoke<string>("serial_open", { onData: channel, path, baud });
+}
+
+/** Open a Telnet connection over TCP. */
+export function telnetOpen(host: string, port: number): OpenSession {
+  return (channel: Channel<number[]>) =>
+    invoke<string>("telnet_open", { onData: channel, config: { host, port } });
 }
 
 /* -------------------------------------------------------------------------- */

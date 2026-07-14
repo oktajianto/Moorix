@@ -3,6 +3,7 @@ use tauri::{AppHandle, State};
 
 use crate::ssh::{SshConfig, SshSession};
 use crate::state::{AppState, Session};
+use crate::telnet::{TelnetConfig, TelnetSession};
 
 /// Open a new local shell session. `on_data` is a channel the frontend passes
 /// in; the backend streams raw PTY output bytes back through it. Desktop only —
@@ -44,6 +45,54 @@ pub async fn ssh_open(
     let id = state.next_id();
     let session = SshSession::connect(app, id.clone(), config, cols, rows, on_data).await?;
     state.insert(id.clone(), Session::Ssh(session));
+    Ok(id)
+}
+
+/// Open a local serial-port session (desktop only).
+#[tauri::command]
+pub fn serial_open(
+    state: State<AppState>,
+    on_data: Channel<Vec<u8>>,
+    path: String,
+    baud: u32,
+) -> Result<String, String> {
+    #[cfg(desktop)]
+    {
+        let session = crate::serial::SerialSession::open(path, baud, on_data)?;
+        let id = state.next_id();
+        state.insert(id.clone(), Session::Serial(session));
+        Ok(id)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (state, on_data, path, baud);
+        Err("serial ports are not available on mobile".into())
+    }
+}
+
+/// List the serial ports available on this machine (desktop only).
+#[tauri::command]
+pub fn serial_ports() -> Vec<String> {
+    #[cfg(desktop)]
+    {
+        crate::serial::available_ports()
+    }
+    #[cfg(mobile)]
+    {
+        Vec::new()
+    }
+}
+
+/// Open a new Telnet session over TCP.
+#[tauri::command]
+pub async fn telnet_open(
+    state: State<'_, AppState>,
+    on_data: Channel<Vec<u8>>,
+    config: TelnetConfig,
+) -> Result<String, String> {
+    let session = TelnetSession::connect(config, on_data).await?;
+    let id = state.next_id();
+    state.insert(id.clone(), Session::Telnet(session));
     Ok(id)
 }
 

@@ -191,7 +191,7 @@ Moorix/
 - [ ] Secure credential store (stronghold)
 - [ ] Banyak tema + import tema (format iTerm2)
 - [ ] Keybinding kustom
-- [ ] Serial & Telnet (desktop)
+- [x] Serial & Telnet (Serial desktop-only; Telnet cross-platform) — via Launcher quick-connect
 
 ### Lanjutan (v1.0+)
 - [ ] SSH port forwarding (local/remote/dynamic)
@@ -438,6 +438,18 @@ Setelah plan ini disetujui:
 - ⬜ Uji jalan di HP/emulator (`pnpm tauri android dev`) — bukti SSH di Android.
 - ⚠️ NDK 28 dipakai; sempat ada exception **Kotlin daemon** saat Gradle build tapi auto-fallback "compile without daemon" → build tetap sukses. Pantau bila berulang (`./gradlew --stop`).
 - Ikon app diganti ke `icon-logo-saja.png` via `tauri icon` (regen desktop/iOS/Android). Logo di dalam app (`src/assets/moorix-logo.png`) masih terpisah.
+
+### Fase 8 — Serial + Telnet ✅ SELESAI
+- ✅ **Serial (desktop-only)** — `src-tauri/src/serial.rs` `SerialSession` pakai crate `serialport` 4 (target-gated `cfg(not(android|ios))`). Reader thread (timeout 50ms, poll `AtomicBool` stop) → Channel; write langsung ke port. Command `serial_open(path, baud)` + `serial_ports()` (list port tersedia). `#[cfg(mobile)]` → return Err.
+- ✅ **Telnet (cross-platform, TCP)** — `src-tauri/src/telnet.rs` `TelnetSession` (tokio TCP, model input mpsc seperti SSH). Parser negosiasi IAC minimal & **loop-safe**: setuju server ECHO+SGA, tolak opsi lain, skip subnegosiasi (SB…SE), escape `0xFF` (IAC IAC) di output. Command `telnet_open({host, port})`.
+- ✅ `state.rs` — `Session` enum tambah `Serial` (desktop) & `Telnet`; write/resize(no-op)/kill di-handle. `lib.rs` daftarkan modul + command.
+- ✅ **Frontend Launcher** — mode `menu/serial/telnet`. Menu: Local (desktop), SSH, Serial (desktop), Telnet. Form Serial: dropdown port (dari `serial_ports`, fallback text input `COM3`/`/dev/ttyUSB0`) + baud (9600–230400). Form Telnet: host + port (default 23). `serialOpen`/`telnetOpen` di `profiles.ts`. Serial disembunyikan di mobile (`IS_MOBILE`), Telnet tersedia semua platform.
+- ✅ **Verifikasi**: `cargo check` (desktop) lolos; **8 unit test `TelnetParser`** (passthrough, escape IAC, agree ECHO/SGA, refuse lain, skip subneg, dedup anti-loop, IAC terpotong antar-read) lolos; `pnpm build` lolos; harness browser — menu→serial→telnet render benar, Telnet Connect memicu launch `host:port`.
+
+**Catatan Fase 8:**
+- Serial belum diuji dengan device fisik (butuh hardware). Telnet negosiasi teruji via unit test; end-to-end ke server nyata belum diuji dari UI Tauri (butuh window native).
+- Serial/Telnet lewat **Launcher quick-connect**, belum jadi **saved profile** — template Serial/Telnet di `NewProfilePicker` masih disabled (butuh profile-editor per-tipe, ikut rancangan §17).
+- Serial resize & Telnet NAWS di-no-op-kan (MVP).
 
 ---
 

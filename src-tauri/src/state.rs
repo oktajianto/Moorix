@@ -6,13 +6,20 @@ use tokio::sync::oneshot;
 
 #[cfg(desktop)]
 use crate::pty::PtySession;
+#[cfg(desktop)]
+use crate::serial::SerialSession;
 use crate::ssh::SshSession;
+use crate::telnet::TelnetSession;
 
-/// A terminal session — either a local PTY (desktop only) or an SSH connection.
+/// A terminal session — a local PTY or serial port (desktop only), an SSH
+/// connection, or a Telnet connection.
 pub enum Session {
     #[cfg(desktop)]
     Pty(PtySession),
     Ssh(SshSession),
+    #[cfg(desktop)]
+    Serial(SerialSession),
+    Telnet(TelnetSession),
 }
 
 impl Session {
@@ -21,6 +28,9 @@ impl Session {
             #[cfg(desktop)]
             Session::Pty(s) => s.write(data),
             Session::Ssh(s) => s.write(data),
+            #[cfg(desktop)]
+            Session::Serial(s) => s.write(data),
+            Session::Telnet(s) => s.write(data),
         }
     }
 
@@ -29,6 +39,10 @@ impl Session {
             #[cfg(desktop)]
             Session::Pty(s) => s.resize(cols, rows),
             Session::Ssh(s) => s.resize(cols, rows),
+            // Serial and Telnet have no window-size concept.
+            #[cfg(desktop)]
+            Session::Serial(_) => Ok(()),
+            Session::Telnet(_) => Ok(()),
         }
     }
 
@@ -36,9 +50,12 @@ impl Session {
         match self {
             #[cfg(desktop)]
             Session::Pty(s) => s.kill(),
-            // Dropping the SshSession (on removal) closes the input channel,
-            // which stops the IO task and disconnects.
+            // Dropping the Ssh/Telnet session (on removal) closes its input
+            // channel, which stops the IO task and disconnects.
             Session::Ssh(_) => {}
+            #[cfg(desktop)]
+            Session::Serial(s) => s.kill(),
+            Session::Telnet(_) => {}
         }
     }
 }

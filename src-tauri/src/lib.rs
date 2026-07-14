@@ -2,8 +2,11 @@ mod commands;
 #[cfg(desktop)]
 mod pty;
 mod secrets;
+#[cfg(desktop)]
+mod serial;
 mod ssh;
 mod state;
+mod telnet;
 
 use state::AppState;
 
@@ -17,6 +20,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::session_open,
             commands::ssh_open,
+            commands::serial_open,
+            commands::serial_ports,
+            commands::telnet_open,
             commands::session_write,
             commands::session_resize,
             commands::session_close,

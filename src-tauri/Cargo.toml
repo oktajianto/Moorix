@@ -35,5 +35,6 @@ tauri-plugin-store = "2"
 # used in Cargo target tables, so gate on the target OS instead.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 portable-pty = "0.9"
+serialport = "4"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 
