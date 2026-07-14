@@ -322,8 +322,8 @@ Setelah plan ini disetujui:
 - ✅ `src/components/TerminalView.tsx` — xterm.js ↔ IPC, fit + resize observer
 - ✅ `App.tsx` — layout header + terminal full-height
 - ✅ Frontend build lolos
-- 🔄 Rust build (dengan portable-pty)
-- ⬜ `pnpm tauri dev` — verifikasi bisa ketik di shell lokal nyata
+- ✅ Rust build (dengan portable-pty)
+- ✅ `pnpm tauri dev` — verifikasi bisa ketik di shell lokal nyata
 
 **Catatan teknis Fase 1:**
 - Output PTY dikirim sebagai `Vec<u8>` lewat Tauri `Channel` → di JS jadi `number[]` → `Uint8Array` ke xterm. Fungsional untuk MVP; optimasi (raw bytes/base64) menyusul bila throughput jadi isu.
@@ -337,8 +337,8 @@ Setelah plan ini disetujui:
 - ✅ `commands.rs` — `ssh_open` (async command)
 - ✅ Frontend: `TerminalView` digeneralisasi (prop `open`), `Launcher.tsx` (menu Local/SSH + form), `App.tsx` (launcher ↔ terminal + Disconnect)
 - ✅ Frontend build lolos
-- 🔄 Rust build (russh)
-- ⬜ `pnpm tauri dev` — verifikasi konek SSH ke server nyata
+- ✅ Rust build (russh)
+- ✅ `pnpm tauri dev` — verifikasi konek SSH ke server nyata
 
 **Catatan teknis Fase 2:**
 - SSH pakai model input via `tokio::sync::mpsc`: command sync (`session_write/resize`) kirim pesan ke IO task async yang memegang russh channel. Output russh → Tauri Channel.
@@ -360,7 +360,7 @@ Setelah plan ini disetujui:
 - Tab tetap di-*mount* (display none/block) agar xterm & sesi PTY/SSH tidak mati saat pindah tab.
 - Middle-click / hover-✕ untuk menutup tab.
 
-### Fase 4 — Welcome + Settings + Themes (verifikasi)
+### Fase 4 — Welcome + Settings + Themes ✅ SELESAI
 - ✅ `src/themes.ts` — 6 tema (Moorix Dark, Dracula, One Dark, Solarized Dark, Tokyo Night, Light)
 - ✅ `src/settings.tsx` — Context + persist localStorage (fontSize, fontFamily, themeName, cursorBlink)
 - ✅ `src/components/Settings.tsx` — panel overlay (tema+swatch, font, size slider, cursor blink)
@@ -368,7 +368,7 @@ Setelah plan ini disetujui:
 - ✅ `TerminalView` — terapkan settings live (font/tema) tanpa merusak sesi (pakai refs)
 - ✅ `TitleBar` — tombol ⚙️; `main.tsx` — `SettingsProvider`; background area themable
 - ✅ Frontend build lolos
-- ⬜ Verifikasi manual (Welcome, ganti tema live, settings)
+- ✅ Verifikasi manual (Welcome, ganti tema live, settings)
 
 **Catatan:** persist masih localStorage (MVP). Nanti pindah ke `tauri-plugin-store` agar konsisten lintas platform & lebih tahan.
 
@@ -396,10 +396,10 @@ Setelah plan ini disetujui:
 
 ### 17.1 Alur "New profile"
 1. Settings → Profiles → **New ▾ → New profile**
-2. Muncul **palette pemilih template** (gaya quick-launch): judul *"Select a base profile to use as a template"*
-   - **Template**: Raw socket connection (Telnet), **SSH connection**, Serial connection, Telnet session
-   - **Duplicate an existing profile**: daftar profil yang ada (built-in + user) untuk diklon
-   - Keyboard ↑/↓ + Enter (baris teraktif badge `ENTER →`)
+2. Muncul **palette pemilih template** (gaya quick-launch): judul *"Select a base profile to use as a template"* — ✅ **SUDAH DIBANGUN**
+   - **Template**: Raw socket connection (Telnet), **SSH connection** (✅ aktif), Serial connection, Telnet session (⬜ disabled — Fase 8)
+   - **Duplicate an existing profile**: ✅ daftar profil user tampil & bisa diklon
+   - Keyboard ↑/↓ + Enter (baris teraktif badge `ENTER ↵`) — ✅ done
 3. Pilih template → buka **modal editor profil** sesuai tipe. (Fokus: SSH.)
 
 ### 17.2 Editor Profil — kolom kiri (umum semua tipe)
@@ -452,8 +452,8 @@ Tab: **GENERAL · PORTS · ADVANCED · CIPHERS · COLORS · LOGIN SCRIPTS · INP
 Footer: **Save** / **Cancel**.
 
 ### 17.5 Implikasi backend untuk CIPHERS & COLORS
-- **CIPHERS** → `russh::client::Config.preferred` (`Preferred { kex, cipher, mac, key, compression }`). russh 0.62 mendukung set algoritma pilihan → **feasible**; perlu mapping nama UI → tipe russh, dan validasi mana yang didukung `ring` backend.
-- **COLORS** → override tema xterm **per-sesi** (independen dari tema global app). Murni frontend; perlu pustaka skema warna (impor koleksi iTerm2).
+- **CIPHERS** → `russh::client::Config.preferred` (`Preferred { kex, cipher, mac, key, compression }`). russh 0.62 mendukung set algoritma pilihan → ✅ **DITERAPKAN**; mapping nama UI → tipe russh + fallback default per kategori.
+- **COLORS** → ✅ **DITERAPKAN** — override tema xterm **per-sesi** (independen dari tema global app), murni frontend via `TermOptions`. Saat ini memakai daftar tema Moorix; impor koleksi iTerm2 menyusul (opsional).
 
 ---
 
@@ -473,11 +473,18 @@ mengubah frontend. Password **tidak pernah** disimpan di store (`moorix.json`); 
 
 ### Update Fase 5 — profil SSH user
 - ✅ `NewProfilePicker` (template: SSH aktif; Serial/Telnet/Raw disabled)
+  - ✅ **Duplicate an existing profile** — daftar profil user tampil & bisa diklon (`cloneProfile`: id baru, nama `(copy)`, password dikosongkan) → buka editor
+  - ✅ **Keyboard navigation** — ↑/↓ pindah baris (template SSH + daftar duplicate), Enter pilih (badge `ENTER ↵`), Esc tutup, mouse-hover set aktif
+  - ⬜ Template Serial/Telnet/Raw socket tetap disabled → menunggu **Fase 8** (transport backend)
 - ✅ `ProfileEditor` — editor SSH 7 tab (GENERAL/PORTS/ADVANCED/CIPHERS/COLORS/LOGIN SCRIPTS/INPUT) + kolom kiri (Name/Group/Icon Lucide/Color/toggles)
 - ✅ Profil user tersimpan di store (`userProfiles`), tampil di list (Ungrouped/grup) + palette, bisa edit/hapus/launch
 - ✅ Password → OS keychain (`keyring`), diambil saat connect; strip dari store
 - ✅ **Diterapkan ke backend russh:** CIPHERS (`Config.preferred` via `parse_names` + `TryFrom<&str>`, fallback default per kategori bila kosong), **keep-alive** (`keepalive_interval`/`keepalive_max`), **ready timeout** (`tokio::time::timeout` saat connect).
-- ⬜ **Belum diterapkan (ditunda):** PORTS (port forwarding local/remote/dynamic), X11/agent forwarding, skip banner, reuse session (multiplexing), LOGIN SCRIPTS (expect/send), INPUT backspace mode. COLORS per-sesi = item #3.
+- ✅ **COLORS / INPUT / LOGIN SCRIPTS diterapkan (frontend-only, via `TermOptions` per-sesi di `TerminalView`):**
+  - **COLORS** — `ssh.colorScheme` override tema xterm per-sesi (independen tema global; kosong = ikut global). Tetap override walau tema global berubah.
+  - **INPUT** — backspace mode remap keystroke (`attachCustomKeyEventHandler`): ctrl-h→`\x08`, delete→CSI `\x1b[3~`, passthrough/ctrl-?→default DEL `\x7f`.
+  - **LOGIN SCRIPTS** — automasi expect/send atas output stream (`runLoginScripts`): match exact/regex/optional (ANSI di-strip), kirim `send + \r`; step required blocking, optional bisa dilewati.
+- ⬜ **Belum diterapkan (butuh kerja russh, bukan transport baru):** PORTS (port forwarding local/remote/dynamic), X11/agent forwarding, skip banner, reuse session (multiplexing).
 
 ### 17.4 Implikasi data & backend (catatan penting)
 - Profil SSH user disimpan di `tauri-plugin-store` (metadata). ⚠️ **Password → stronghold/keychain, bukan store plaintext** (fitur keamanan menyusul).

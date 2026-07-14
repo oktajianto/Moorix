@@ -6,6 +6,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import "@xterm/xterm/css/xterm.css";
 import { useSettings } from "../settings";
 import { getTheme } from "../themes";
+import type { BackspaceMode, LoginScript } from "../profiles";
 
 /**
  * Opens a backend session and returns its id. The channel streams raw PTY/SSH
@@ -17,12 +18,65 @@ export type OpenSession = (
   rows: number,
 ) => Promise<string>;
 
+/** Per-session behaviour derived from an SSH profile. All optional — a local
+ *  shell tab passes none and gets the global theme + default key handling. */
+export type TermOptions = {
+  /** Theme name that overrides the global theme for this session ("" = global). */
+  colorScheme?: string;
+  /** How the Backspace key is encoded (INPUT tab). */
+  backspaceMode?: BackspaceMode;
+  /** expect/send automation run against the output stream (LOGIN SCRIPTS tab). */
+  loginScripts?: LoginScript[];
+};
+
+/** The byte sequence a given backspace mode should send, or null to keep
+ *  xterm's default (DEL, 0x7f). */
+function backspaceSeq(mode: BackspaceMode | undefined): string | null {
+  switch (mode) {
+    case "ctrl-h":
+      return "\x08";
+    case "delete":
+      return "\x1b[3~";
+    // "ctrl-?" is 0x7f, which is already xterm's default → keep default.
+    case "ctrl-?":
+    case "passthrough":
+    default:
+      return null;
+  }
+}
+
+/** Strip the common ANSI/OSC escape sequences so expect-matching sees plain text. */
+function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+function matchExpect(buffer: string, s: LoginScript): boolean {
+  if (!s.expect) return false;
+  if (s.mode === "regex") {
+    try {
+      return new RegExp(s.expect).test(buffer);
+    } catch {
+      return false;
+    }
+  }
+  return buffer.includes(s.expect); // exact & optional both substring-match
+}
+
 /**
  * A single terminal pane: renders xterm.js and wires it to a backend session.
  * Keystrokes go out via `session_write`; output comes back over a Channel.
  * Reacts to live settings changes (font, theme) without tearing the session.
+ * `options` applies per-profile color scheme, backspace mode, and login scripts.
  */
-export function TerminalView({ open }: { open: OpenSession }) {
+export function TerminalView({
+  open,
+  options,
+}: {
+  open: OpenSession;
+  options?: TermOptions;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -31,6 +85,11 @@ export function TerminalView({ open }: { open: OpenSession }) {
   const { settings } = useSettings();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+
+  // Per-profile options are fixed for the session; read via ref so live setting
+  // changes don't re-run the setup effect and tear the session down.
+  const optionsRef = useRef<TermOptions>(options ?? {});
+  optionsRef.current = options ?? {};
 
   useEffect(() => {
     const container = containerRef.current;
@@ -41,7 +100,7 @@ export function TerminalView({ open }: { open: OpenSession }) {
       fontFamily: s.fontFamily,
       fontSize: s.fontSize,
       cursorBlink: s.cursorBlink,
-      theme: getTheme(s.themeName),
+      theme: getTheme(optionsRef.current.colorScheme || s.themeName),
     });
     termRef.current = term;
 
@@ -60,8 +119,62 @@ export function TerminalView({ open }: { open: OpenSession }) {
 
     let disposed = false;
 
+    const sendData = (data: string) => {
+      const id = sessionIdRef.current;
+      if (!id) return;
+      const bytes = Array.from(new TextEncoder().encode(data));
+      void invoke("session_write", { id, data: bytes });
+    };
+
+    // LOGIN SCRIPTS — expect/send automation over the output stream.
+    const decoder = new TextDecoder();
+    let loginBuf = "";
+    let scriptIdx = 0;
+    const runLoginScripts = (chunk: string) => {
+      const scripts = optionsRef.current.loginScripts ?? [];
+      if (scriptIdx >= scripts.length) return;
+      loginBuf = stripAnsi(loginBuf + chunk).slice(-4096);
+      for (let j = scriptIdx; j < scripts.length; j++) {
+        const script = scripts[j];
+        if (matchExpect(loginBuf, script)) {
+          sendData(script.send + "\r");
+          loginBuf = "";
+          scriptIdx = j + 1;
+          break;
+        }
+        // Optional steps may be skipped if a later step matches first; a
+        // required step blocks until its prompt appears.
+        if (script.mode !== "optional") break;
+      }
+    };
+
     const channel = new Channel<number[]>();
-    channel.onmessage = (bytes) => term.write(new Uint8Array(bytes));
+    channel.onmessage = (bytes) => {
+      const arr = new Uint8Array(bytes);
+      term.write(arr);
+      if ((optionsRef.current.loginScripts?.length ?? 0) > 0) {
+        runLoginScripts(decoder.decode(arr, { stream: true }));
+      }
+    };
+
+    // INPUT — remap the Backspace key when the profile asks for it.
+    term.attachCustomKeyEventHandler((e) => {
+      if (
+        e.type === "keydown" &&
+        e.key === "Backspace" &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.shiftKey
+      ) {
+        const seq = backspaceSeq(optionsRef.current.backspaceMode);
+        if (seq !== null) {
+          sendData(seq);
+          return false; // handled — don't let xterm send the default
+        }
+      }
+      return true;
+    });
 
     open(channel, term.cols, term.rows)
       .then((id) => {
@@ -105,14 +218,15 @@ export function TerminalView({ open }: { open: OpenSession }) {
     };
   }, [open]);
 
-  // Apply live settings changes to the running terminal.
+  // Apply live settings changes to the running terminal. A per-profile color
+  // scheme keeps overriding the global theme.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.fontSize = settings.fontSize;
     term.options.fontFamily = settings.fontFamily;
     term.options.cursorBlink = settings.cursorBlink;
-    term.options.theme = getTheme(settings.themeName);
+    term.options.theme = getTheme(optionsRef.current.colorScheme || settings.themeName);
 
     const container = containerRef.current;
     if (container && container.clientWidth > 0 && container.clientHeight > 0) {

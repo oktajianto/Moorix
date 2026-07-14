@@ -12,7 +12,7 @@ import {
   HardDrive,
   type LucideIcon,
 } from "lucide-react";
-import type { OpenSession } from "./components/TerminalView";
+import type { OpenSession, TermOptions } from "./components/TerminalView";
 
 export type ProfileType = "local" | "ssh";
 
@@ -195,6 +195,31 @@ export function newSshProfile(group = "Ungrouped"): UserProfile {
   };
 }
 
+/** Deep-clone a user profile as a new, independent profile (fresh id, "(copy)"
+ *  name). The password lives in the OS keychain keyed by profile id, so the
+ *  clone starts without one — the user re-enters it in the editor if needed. */
+export function cloneProfile(p: UserProfile): UserProfile {
+  return {
+    ...p,
+    id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: p.name ? `${p.name} (copy)` : "Untitled (copy)",
+    ssh: {
+      ...p.ssh,
+      password: "",
+      ports: p.ssh.ports.map((f) => ({ ...f })),
+      loginScripts: p.ssh.loginScripts.map((s) => ({ ...s })),
+      advanced: { ...p.ssh.advanced },
+      ciphers: {
+        ciphers: [...p.ssh.ciphers.ciphers],
+        kex: [...p.ssh.ciphers.kex],
+        hmac: [...p.ssh.ciphers.hmac],
+        hostKey: [...p.ssh.ciphers.hostKey],
+        compression: [...p.ssh.ciphers.compression],
+      },
+    },
+  };
+}
+
 /** Lucide icons selectable for a profile. */
 export const PROFILE_ICONS: { name: string; Icon: LucideIcon }[] = [
   { name: "server", Icon: Server },
@@ -242,5 +267,14 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
       },
     };
     return invoke<string>("ssh_open", { onData: channel, config, cols, rows });
+  };
+}
+
+/** Per-session terminal behaviour (COLORS / INPUT / LOGIN SCRIPTS tabs). */
+export function termOptionsOf(p: UserProfile): TermOptions {
+  return {
+    colorScheme: p.ssh.colorScheme,
+    backspaceMode: p.ssh.backspaceMode,
+    loginScripts: p.ssh.loginScripts,
   };
 }

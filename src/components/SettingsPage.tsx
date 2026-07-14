@@ -43,6 +43,7 @@ type Props = {
   onLaunchUserProfile: (p: UserProfile) => void;
   onNewProfile: () => void;
   onEditProfile: (p: UserProfile) => void;
+  onDuplicateProfile: (p: UserProfile) => void;
   onDeleteProfile: (id: string) => void;
 };
 
@@ -121,6 +122,7 @@ function ProfilesSection({
   onLaunchUserProfile,
   onNewProfile,
   onEditProfile,
+  onDuplicateProfile,
   onDeleteProfile,
 }: Props) {
   const [filter, setFilter] = useState("");
@@ -307,7 +309,15 @@ function ProfilesSection({
       )}
 
       {pickerOpen && (
-        <NewProfilePicker onClose={() => setPickerOpen(false)} onNewSsh={startNewSsh} />
+        <NewProfilePicker
+          onClose={() => setPickerOpen(false)}
+          onNewSsh={startNewSsh}
+          userProfiles={userProfiles}
+          onDuplicate={(p) => {
+            setPickerOpen(false);
+            onDuplicateProfile(p);
+          }}
+        />
       )}
     </div>
   );

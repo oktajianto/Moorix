@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/TitleBar";
 import { HostKeyPrompt, type HostKeyReq } from "./components/HostKeyPrompt";
-import { TerminalView, type OpenSession } from "./components/TerminalView";
+import { TerminalView, type OpenSession, type TermOptions } from "./components/TerminalView";
 import { Launcher } from "./components/Launcher";
 import { SettingsPage } from "./components/SettingsPage";
 import { ProfileEditor } from "./components/ProfileEditor";
@@ -15,6 +15,8 @@ import {
   localOpen,
   sshOpenFromProfile,
   newSshProfile,
+  cloneProfile,
+  termOptionsOf,
   type Profile,
   type UserProfile,
 } from "./profiles";
@@ -30,7 +32,7 @@ import { getStore, setValue } from "./store";
 
 type Tab =
   | { id: string; kind: "launcher" }
-  | { id: string; kind: "terminal"; label: string; open: OpenSession }
+  | { id: string; kind: "terminal"; label: string; open: OpenSession; options?: TermOptions }
   | { id: string; kind: "settings" };
 
 let counter = 1;
@@ -151,10 +153,10 @@ function App() {
     setShowWelcome(false);
   };
 
-  const openTerminalTab = (open: OpenSession, label: string) => {
+  const openTerminalTab = (open: OpenSession, label: string, options?: TermOptions) => {
     dismissWelcome();
     const id = nextId();
-    setTabs((prev) => [...prev, { id, kind: "terminal", label, open }]);
+    setTabs((prev) => [...prev, { id, kind: "terminal", label, open, options }]);
     setActiveId(id);
   };
 
@@ -169,7 +171,7 @@ function App() {
   };
 
   const launchUserProfile = (p: UserProfile) =>
-    openTerminalTab(sshOpenFromProfile(p), profileLabel(p));
+    openTerminalTab(sshOpenFromProfile(p), profileLabel(p), termOptionsOf(p));
 
   const newTab = () => {
     const def = BUILTIN_PROFILES.find((p) => p.id === defaultProfileId);
@@ -196,11 +198,11 @@ function App() {
   };
 
   const launchInTab =
-    (tabId: string) => (open: OpenSession, label: string) => {
+    (tabId: string) => (open: OpenSession, label: string, options?: TermOptions) => {
       dismissWelcome();
       setTabs((prev) =>
         prev.map((tab) =>
-          tab.id === tabId ? { id: tabId, kind: "terminal", label, open } : tab,
+          tab.id === tabId ? { id: tabId, kind: "terminal", label, open, options } : tab,
         ),
       );
     };
@@ -208,9 +210,9 @@ function App() {
   const onEditorSave = (p: UserProfile) => {
     saveProfile(p);
     if (editor?.mode === "connect-tab") {
-      launchInTab(editor.tabId)(sshOpenFromProfile(p), profileLabel(p));
+      launchInTab(editor.tabId)(sshOpenFromProfile(p), profileLabel(p), termOptionsOf(p));
     } else if (editor?.mode === "connect-new") {
-      openTerminalTab(sshOpenFromProfile(p), profileLabel(p));
+      openTerminalTab(sshOpenFromProfile(p), profileLabel(p), termOptionsOf(p));
     }
     setEditor(null);
   };
@@ -283,10 +285,13 @@ function App() {
                   setEditor({ mode: "save", initial: newSshProfile("Ungrouped") })
                 }
                 onEditProfile={(p) => setEditor({ mode: "save", initial: p })}
+                onDuplicateProfile={(p) =>
+                  setEditor({ mode: "save", initial: cloneProfile(p) })
+                }
                 onDeleteProfile={deleteProfile}
               />
             ) : (
-              <TerminalView open={tab.open} />
+              <TerminalView open={tab.open} options={tab.options} />
             )}
           </div>
         ))}
