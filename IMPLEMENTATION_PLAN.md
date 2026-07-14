@@ -3,7 +3,29 @@
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
 > Satu codebase yang menjangkau desktop **dan** mobile.
 
-Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-13
+Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-15
+
+---
+
+## 0. Status Progress (ringkas)
+
+| Fase | Fokus | Status |
+|---|---|---|
+| 0 | Setup & scaffolding (Tauri 2 + React + Tailwind) | ✅ |
+| 1 | Terminal core (xterm.js + PTY desktop) | ✅ |
+| 2 | SSH client (russh, password/key, host-key TOFU) | ✅ |
+| 3 | Tabs + custom title bar | ✅ |
+| 4 | Welcome + Settings + Themes | ✅ |
+| 5 | Profiles + secrets (keychain) + editor SSH | ✅ |
+| 6 | Split pane (resizable, pool preservation) | ✅ |
+| 7A | Mobile-ready code (gate PTY/keyring, SSH-only, auto-reconnect) | ✅ |
+| 7B | Android build → **signed release APK** | ✅ |
+| 8 | Serial (desktop) + Telnet transports | ✅ |
+| 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (Remote -R, SFTP, sync, jump host: ⬜) |
+
+**Berikutnya (kandidat):** port forwarding Remote (-R) · SFTP file browser · jump host + agent forwarding · sync profil (E2E) · plugin system · profile-editor Serial/Telnet (§17) · toast UI status forward.
+
+> Detail per fase ada di **§16 Progress Log**. Kolom "Status" di-update tiap fase (jangan dihapus).
 
 ---
 
