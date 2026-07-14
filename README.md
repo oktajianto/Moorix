@@ -47,4 +47,5 @@ pnpm tauri android dev
 
 ## Lisensi
 
-[MIT](./LICENSE)
+Proprietary — © 2026 Hammam Oktajianto. All rights reserved. Lihat [LICENSE](./LICENSE).
+Kode ini boleh dilihat untuk referensi, tetapi **tidak** boleh disalin, dimodifikasi, atau didistribusikan tanpa izin tertulis.
