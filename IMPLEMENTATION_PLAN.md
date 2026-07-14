@@ -434,7 +434,7 @@ Setelah plan ini disetujui:
 - ✅ **Release signing disiapkan**: `app/build.gradle.kts` diberi `signingConfigs.release` yang membaca `keystore.properties` (gitignored). Template committed: `keystore.properties.example`. **Keystore + password digenerate user sendiri** (`keytool`), tidak di-commit ke repo publik ini.
 
 **Catatan / menyusul:**
-- ⬜ Release APK ter-signing nyata (menunggu user generate keystore via `keytool` + isi `keystore.properties`), lalu `pnpm tauri android build --apk`.
+- ✅ **Release APK ter-signing** — user generate keystore via `keytool` (alias `moorix`), `keystore.properties` diisi, `.jks` dicopy ke `src-tauri/gen/android/moorix-release.jks` (gitignored). `pnpm tauri android build --apk --target aarch64` → `app-universal-release.apk` **16.3 MB**, verifikasi `apksigner`: V2 signer `CN=hammam oktajianto, O=oktajianto.com, C=ID`. ⚠️ Keystore + password **wajib disimpan & di-backup** (tak tergantikan untuk update app).
 - ⬜ Uji jalan di HP/emulator (`pnpm tauri android dev`) — bukti SSH di Android.
 - ⚠️ NDK 28 dipakai; sempat ada exception **Kotlin daemon** saat Gradle build tapi auto-fallback "compile without daemon" → build tetap sukses. Pantau bila berulang (`./gradlew --stop`).
 - Ikon app diganti ke `icon-logo-saja.png` via `tauri icon` (regen desktop/iOS/Android). Logo di dalam app (`src/assets/moorix-logo.png`) masih terpisah.
