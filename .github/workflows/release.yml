@@ -34,7 +34,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libudev-dev
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -84,7 +85,9 @@ jobs:
             Mobile (Android/iOS) is not part of this release.
           # Generate + upload latest.json so the auto-updater can read it.
           includeUpdaterJson: true
-          # Must be a full (non-prerelease, non-draft) release: the updater's
-          # `releases/latest/download/latest.json` endpoint ignores prereleases.
+          # Must be a full (published, non-prerelease) release: the updater's
+          # `releases/latest/download/latest.json` endpoint ignores drafts and
+          # prereleases. Auto-publishes on tag push (delete the release if bad).
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
