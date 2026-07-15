@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
+use russh_sftp::client::SftpSession;
 use tokio::sync::oneshot;
 
 #[cfg(desktop)]
 use crate::pty::PtySession;
 #[cfg(desktop)]
 use crate::serial::SerialSession;
-use crate::ssh::SshSession;
+use crate::ssh::{SshHandle, SshSession};
 use crate::telnet::TelnetSession;
 
 /// A terminal session — a local PTY or serial port (desktop only), an SSH
@@ -64,6 +65,11 @@ impl Session {
 #[derive(Default)]
 pub struct AppState {
     sessions: Mutex<HashMap<String, Session>>,
+    /// Open SFTP sessions (file browser), keyed by their own id. Each rides on
+    /// an existing SSH session's connection.
+    sftp: Mutex<HashMap<String, Arc<SftpSession>>>,
+    /// Cancellation flags for in-flight SFTP transfers, keyed by transfer id.
+    transfers: Mutex<HashMap<String, Arc<AtomicBool>>>,
     counter: AtomicU64,
     host_key_counter: AtomicU64,
     pending_host_keys: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
@@ -114,5 +120,43 @@ impl AppState {
         if let Some(mut session) = self.sessions.lock().unwrap().remove(id) {
             session.kill();
         }
+    }
+
+    /// A clone of an SSH session's connection handle, for opening an SFTP
+    /// subsystem. Returns None if the id isn't an SSH session.
+    pub fn ssh_handle(&self, id: &str) -> Option<SshHandle> {
+        match self.sessions.lock().unwrap().get(id) {
+            Some(Session::Ssh(s)) => Some(s.handle()),
+            _ => None,
+        }
+    }
+
+    pub fn insert_sftp(&self, id: String, sftp: Arc<SftpSession>) {
+        self.sftp.lock().unwrap().insert(id, sftp);
+    }
+
+    pub fn sftp(&self, id: &str) -> Option<Arc<SftpSession>> {
+        self.sftp.lock().unwrap().get(id).cloned()
+    }
+
+    pub fn remove_sftp(&self, id: &str) {
+        self.sftp.lock().unwrap().remove(id);
+    }
+
+    /// Register a transfer's cancel flag; the transfer loop polls it.
+    pub fn register_cancel(&self, id: String) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        self.transfers.lock().unwrap().insert(id, flag.clone());
+        flag
+    }
+
+    pub fn signal_cancel(&self, id: &str) {
+        if let Some(flag) = self.transfers.lock().unwrap().get(id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn clear_cancel(&self, id: &str) {
+        self.transfers.lock().unwrap().remove(id);
     }
 }

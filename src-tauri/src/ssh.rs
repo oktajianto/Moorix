@@ -74,12 +74,26 @@ enum SshInput {
     Resize { cols: u16, rows: u16 },
 }
 
+/// Shared SSH connection handle. `Handle` isn't `Sync`, so it lives behind an
+/// async mutex; the shell task, port forwards, and SFTP sessions all open
+/// channels on it.
+pub(crate) type SshHandle = Arc<tokio::sync::Mutex<client::Handle<ClientHandler>>>;
+
 /// A live SSH session. Owning it means owning the input side of the IO task;
 /// dropping it (or removing it from the registry) tears the session down and
 /// aborts any port-forward listeners.
 pub struct SshSession {
     input: UnboundedSender<SshInput>,
     forwards: Vec<tauri::async_runtime::JoinHandle<()>>,
+    handle: SshHandle,
+}
+
+impl SshSession {
+    /// A clone of the shared connection handle, for opening extra channels
+    /// (e.g. an SFTP subsystem) on the same authenticated connection.
+    pub fn handle(&self) -> SshHandle {
+        self.handle.clone()
+    }
 }
 
 impl Drop for SshSession {
@@ -280,7 +294,7 @@ impl SshSession {
                 .await;
         });
 
-        Ok(Self { input: tx, forwards })
+        Ok(Self { input: tx, forwards, handle })
     }
 
     pub fn write(&self, data: &[u8]) -> Result<(), String> {
@@ -300,7 +314,7 @@ impl SshSession {
 /// - known & matching  → accept
 /// - known & different → reject (possible MITM), emit `host-key-mismatch`
 /// - unknown           → prompt the frontend (`host-key-prompt`) and wait
-struct ClientHandler {
+pub(crate) struct ClientHandler {
     app: AppHandle,
     host: String,
     port: u16,

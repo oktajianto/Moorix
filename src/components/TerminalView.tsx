@@ -48,11 +48,43 @@ type PaneEntry = {
   sessionId: Ref<string | null>;
   options: Ref<TermOptions>;
   settings: Ref<Settings>;
+  /** Send text to the backend session (used by paste hotkeys). */
+  write: (data: string) => void;
   /** Full teardown: close session, stop the reconnect listener, dispose xterm. */
   dispose: () => void;
 };
 
 const POOL = new Map<string, PaneEntry>();
+
+/** Hotkey helpers acting on a specific pane's live terminal (from the pool). */
+export function copyPane(paneId: string): void {
+  const e = POOL.get(paneId);
+  if (!e) return;
+  const sel = e.term.getSelection();
+  if (!sel) return;
+  const text = e.settings.current.trimWhitespace ? sel.trim() : sel;
+  if (text) void navigator.clipboard.writeText(text).catch(() => {});
+}
+export function pastePane(paneId: string): void {
+  const e = POOL.get(paneId);
+  if (!e) return;
+  void navigator.clipboard
+    .readText()
+    .then((t) => {
+      if (t) e.write(t);
+    })
+    .catch(() => {});
+}
+export function clearPane(paneId: string): void {
+  POOL.get(paneId)?.term.clear();
+}
+export function selectAllPane(paneId: string): void {
+  POOL.get(paneId)?.term.selectAll();
+}
+/** The backend session id currently bound to a pane (null if not connected). */
+export function paneSessionId(paneId: string): string | null {
+  return POOL.get(paneId)?.sessionId.current ?? null;
+}
 
 /**
  * Tear down a pane for good: close its backend session and dispose the
@@ -90,6 +122,101 @@ function backspaceSeq(mode: BackspaceMode | undefined): string | null {
 function applyLigatures(term: Terminal, on: boolean): void {
   const el = term.element;
   if (el) el.style.fontFeatureSettings = on ? '"liga" 1, "calt" 1' : "normal";
+}
+
+/** Short beep via the Web Audio API for the "audible" terminal bell. */
+function audibleBell(): void {
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.value = 750;
+    gain.gain.value = 0.05;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+    osc.onended = () => ctx.close();
+  } catch {
+    // No audio device / blocked — silently ignore.
+  }
+}
+
+/** Wire mouse selection, right/middle-click paste, and the terminal bell.
+ *  Behaviour is read live from `settingsRef` on each event so toggling a
+ *  setting takes effect on already-open terminals. */
+function attachTerminalBehaviors(
+  term: Terminal,
+  container: HTMLDivElement,
+  settingsRef: Ref<Settings>,
+  sendData: (data: string) => void,
+): void {
+  const copySelection = () => {
+    const raw = term.getSelection();
+    if (!raw) return;
+    const text = settingsRef.current.trimWhitespace ? raw.trim() : raw;
+    if (text) void navigator.clipboard.writeText(text).catch(() => {});
+  };
+
+  const paste = async () => {
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return; // clipboard read blocked
+    }
+    if (!text) return;
+    if (settingsRef.current.replaceLineBreaks) text = text.replace(/\r?\n/g, " ");
+    if (
+      settingsRef.current.warnMultilinePaste &&
+      /\r?\n/.test(text.replace(/\r?\n$/, "")) &&
+      !window.confirm("Paste multiple lines into the terminal?")
+    ) {
+      return;
+    }
+    sendData(text);
+  };
+
+  // Copy on select.
+  term.onSelectionChange(() => {
+    if (settingsRef.current.copyOnSelect) copySelection();
+  });
+
+  // Right-click paste: when off, let the native context menu (copy/paste/…)
+  // show; when on, paste — or copy if there's a selection.
+  container.addEventListener("contextmenu", (e) => {
+    if (!settingsRef.current.rightClickPaste) return; // native menu
+    e.preventDefault();
+    if (term.hasSelection()) copySelection();
+    else void paste();
+  });
+
+  // Middle-click paste.
+  container.addEventListener("mousedown", (e) => {
+    if (e.button === 1 && settingsRef.current.pasteOnMiddleClick) {
+      e.preventDefault();
+      void paste();
+    }
+  });
+
+  // Terminal bell: visual flash or audible beep.
+  term.onBell(() => {
+    const bell = settingsRef.current.bell;
+    if (bell === "audible") {
+      audibleBell();
+    } else if (bell === "visual") {
+      const el = term.element;
+      if (el) {
+        el.style.transition = "filter 60ms";
+        el.style.filter = "invert(100%)";
+        setTimeout(() => (el.style.filter = ""), 100);
+      }
+    }
+  });
 }
 
 /** Strip the common ANSI/OSC escape sequences so expect-matching sees plain text. */
@@ -132,6 +259,10 @@ function createEntry(
     cursorStyle: settings.cursorShape,
     minimumContrastRatio: settings.minimumContrastRatio,
     lineHeight: lineHeightOf(settings),
+    scrollback: settings.scrollback,
+    drawBoldTextInBrightColors: settings.boldBright,
+    scrollOnUserInput: settings.scrollOnInput,
+    macOptionIsMeta: settings.altIsMeta,
     theme: getTheme(optionsRef.current.colorScheme || settings.themeName),
   });
 
@@ -139,10 +270,10 @@ function createEntry(
   term.loadAddon(fit);
   term.open(container);
 
-  // The WebGL renderer is fast but rasterises glyphs individually, so it can't
-  // shape ligatures. When ligatures are enabled we fall back to the DOM renderer
-  // (which honours font-feature-settings). Applies to newly opened terminals.
-  if (!settings.fontLigatures) {
+  // Renderer: WebGL is fast but rasterises glyphs individually, so it can't
+  // shape ligatures — fall back to the DOM renderer when ligatures are on or the
+  // user picked "dom". Renderer choice applies to newly opened terminals.
+  if (settings.rendererType === "webgl" && !settings.fontLigatures) {
     try {
       term.loadAddon(new WebglAddon());
     } catch {
@@ -158,6 +289,10 @@ function createEntry(
     const bytes = Array.from(new TextEncoder().encode(data));
     void invoke("session_write", { id, data: bytes });
   };
+
+  // Mouse/clipboard/bell behaviours (copy-on-select, right/middle-click paste,
+  // terminal bell). Reads live settings from settingsRef on each event.
+  attachTerminalBehaviors(term, container, settingsRef, sendData);
 
   // LOGIN SCRIPTS — expect/send automation over the output stream.
   const decoder = new TextDecoder();
@@ -288,6 +423,7 @@ function createEntry(
     sessionId,
     options: optionsRef,
     settings: settingsRef,
+    write: sendData,
     dispose,
   };
 }
@@ -369,6 +505,10 @@ export function TerminalView({
     term.options.cursorStyle = settings.cursorShape;
     term.options.minimumContrastRatio = settings.minimumContrastRatio;
     term.options.lineHeight = lineHeightOf(settings);
+    term.options.scrollback = settings.scrollback;
+    term.options.drawBoldTextInBrightColors = settings.boldBright;
+    term.options.scrollOnUserInput = settings.scrollOnInput;
+    term.options.macOptionIsMeta = settings.altIsMeta;
     applyLigatures(term, settings.fontLigatures);
     term.options.theme = getTheme(
       entry.options.current.colorScheme || settings.themeName,

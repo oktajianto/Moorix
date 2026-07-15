@@ -2,6 +2,7 @@ import { Fragment, useRef } from "react";
 import {
   SquareSplitHorizontal,
   SquareSplitVertical,
+  FolderOpen,
   X,
 } from "lucide-react";
 import { TerminalView } from "./TerminalView";
@@ -14,6 +15,9 @@ type PaneActions = {
   onClosePane: (id: string) => void;
   /** Update the `sizes` of the split node at `path` (child-index steps). */
   onResize: (path: number[], sizes: number[]) => void;
+  /** SSH tabs only: show a folder button that opens the SFTP file manager. */
+  isSsh?: boolean;
+  onOpenSftp?: (id: string) => void;
 };
 
 /**
@@ -39,6 +43,14 @@ export function Panes({
         }}
       >
         <div className="pointer-events-none absolute right-1.5 top-1.5 z-10 flex gap-0.5 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
+          {actions.isSsh && actions.onOpenSftp && (
+            <PaneButton
+              title="File manager (SFTP)"
+              onClick={() => actions.onOpenSftp!(node.paneId)}
+            >
+              <FolderOpen size={14} />
+            </PaneButton>
+          )}
           <PaneButton
             title="Split right"
             onClick={() => actions.onSplit(node.paneId, "row")}

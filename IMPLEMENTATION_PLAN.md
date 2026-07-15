@@ -23,10 +23,48 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-15
 | 8 | Serial (desktop) + Telnet transports | ✅ |
 | 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (Remote -R, SFTP, sync, jump host: ⬜) |
 | 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ⬜) |
-
-**Berikutnya (kandidat):** port forwarding Remote (-R) · SFTP file browser · jump host + agent forwarding · sync profil (E2E) · plugin system · profile-editor Serial/Telnet (§17) · toast UI status forward.
+| 11 | **SFTP file manager** (dual-pane lokal/remote, upload/download rekursif, DnD, ops remote) | ✅ T1 backend · T2 panel+navigasi · T3 transfer rekursif+progress+cancel · T4 drag-and-drop (in-app + OS drop) · T5 ops mkdir/rename/delete + menu klik-kanan |
 
 > Detail per fase ada di **§16 Progress Log**. Kolom "Status" di-update tiap fase (jangan dihapus).
+
+---
+
+## 0A. Sisa Pekerjaan & Roadmap (belum selesai)
+
+### 🔴 Wajib — urutan disarankan
+1. **Lengkapi file kunci lokal** (§0B) — restore dari repo `all_key_mine` **sebelum** build rilis desktop/Android.
+2. **Publikasikan GitHub Release ber-signing** → mengaktifkan **auto-updater** (Fase 10). Prasyarat: 2 secret repo (`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), **bump versi** di `package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml` (+ `Cargo.lock`), lalu `git tag vX && git push origin vX`. Tanpa rilis + `latest.json`, updater tak berfungsi.
+3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
+4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.
+
+### 🟡 Opsional — nilai tambah
+- **Config sync**: bangun **server sync** minimal (REST/E2E) agar UI Config sync benar-benar hidup (kini UI + persist saja).
+- **SFTP**: lebar panel **persist antar-restart**, **preview file**, **checksum/verify** transfer, progres byte per-file (kini per-file by name/index), simbol link ikon khusus.
+- **Store-only settings** (UI ada, belum berpengaruh runtime): **Sixel** (butuh `@xterm/addon-image`), **Word separators** (custom double-click selection), **Copy with formatting** (rich clipboard), **Bracketed paste**, **Require key to click links** (butuh `@xterm/addon-web-links`).
+- **Terminal**: ligatures **live** (kini hanya terminal baru), renderer switch **live** (kini saat create).
+- **Restore tabs**: pulihkan **layout split** (kini single-pane), dan urutan/tab aktif.
+- **SSH advanced (lanjutan Fase 9)**: **Remote (-R)** forwarding, **X11/agent forwarding**, skip banner, **reuse session** (multiplexing), **jump host**.
+- **Profile editor** untuk **Serial/Telnet** (§17) — kini hanya SSH.
+- **Mobile**: hadirkan file manager/fitur desktop-only ke mobile bila diinginkan (FS sandbox).
+
+---
+
+## 0B. File Kunci / Secret — restore dari repo `all_key_mine`
+
+Beberapa file kunci **sengaja `gitignored`** (rahasia, tidak di-commit ke repo publik). Di mesin baru / setelah clone, lengkapi dulu:
+
+1. **Clone/pull** repo privat **`all_key_mine`**.
+2. **Copy** isi folder **`moorix/`** pada repo itu ke direktori projek ini **sesuai letak/path aslinya** (struktur folder di `moorix/` mengikuti struktur projek — tinggal timpa sesuai path).
+
+File yang harus ada setelah copy:
+
+| File (relatif ke root projek) | Fungsi | Diperlukan untuk |
+|---|---|---|
+| `src-tauri/updater-signing.key` | private key minisign (updater) | sign artefak auto-update |
+| `src-tauri/gen/android/moorix-release.jks` | keystore Android | build APK **release** ber-signing |
+| `src-tauri/gen/android/keystore.properties` | kredensial keystore (path/alias/password) | build APK release |
+
+> Catatan: file `*.pub` (mis. `src-tauri/updater-signing.key.pub`) **aman & sudah di-commit** — tidak perlu di-restore. **Jangan** meng-commit file pada tabel di atas (sudah diabaikan `.gitignore`); backup hanya via repo privat `all_key_mine`. Kehilangan `updater-signing.key`/password = tak bisa rilis update; kehilangan `.jks`/password = tak bisa update APK Android.
 
 ---
 
@@ -517,6 +555,23 @@ Setelah plan ini disetujui:
 - `settings.tsx` ditambah: `fontLigatures`, `normalFontWeight`, `boldFontWeight`, `cursorShape`, `minimumContrastRatio`, `fallbackFont`, `linePadding`, `customCSS` + helper `effectiveFontFamily()` & `lineHeightOf()`.
 - **Diterapkan ke terminal asli** (`TerminalView.tsx`, live): `fontFamily` (+fallback), `fontWeight`/`fontWeightBold`, `cursorStyle`, `minimumContrastRatio`, `lineHeight`. **Custom CSS** di-inject sebagai `<style>` global (App.tsx). **Ligatures**: DOM renderer + `font-feature-settings` saat aktif (WebGL dilewati) — berlaku untuk terminal yang **baru dibuka** (renderer dipilih saat create).
 
+**Settings → Terminal (ala Tabby)** — `SettingsPage.tsx` → `TerminalSection` (menggantikan versi lama font/size/blink yang kini di Appearance):
+- Seksi: **Rendering** (Frontend WebGL/DOM, Scrollback, Draw bold in bright, Sixel*), **Keyboard** (Alt as Meta, Scroll on input), **Mouse** (Right click, Paste on middle-click, Word separators*), **Clipboard** (Copy on select, Warn multi-line paste, Replace line breaks, Trim whitespace), **Sound** (Terminal bell Off/Visual/Audible), **Startup** (Auto-open terminal*, Restore tabs*).
+- **Wired live** (`TerminalView.tsx`): `scrollback`, `drawBoldTextInBrightColors` (boldBright), `scrollOnUserInput` (scrollOnInput), `macOptionIsMeta` (altIsMeta); renderer WebGL/DOM saat create (DOM juga saat ligatures). **Perilaku** via `attachTerminalBehaviors()`: copy-on-select (+trim), right-click (paste / paste-if-no-selection-else-copy / off), paste-on-middle-click, replace-line-breaks + warn-multiline saat paste (pakai `navigator.clipboard`), **bell** visual (flash `invert`) / audible (WebAudio beep).
+- `*` **Store-only** (UI + persist, belum berpengaruh runtime): Sixel (butuh addon-image), Word separators (xterm core tak punya opsi ini). **Diomit** dari screenshot: "Set as %COMSPEC%" (registry Windows, tak relevan/aman), Copy-with-formatting, Bracketed-paste, Require-key-to-click-links (butuh rich clipboard / web-links addon).
+- `Segmented`/`SelectBox`/`SectionTitle` helper baru; helper `Row` lama dihapus.
+
+**Iterasi lanjutan Terminal:**
+- **Right click** diubah dari dropdown 3-mode → **toggle `rightClickPaste`** (default ON = paste / copy-jika-ada-seleksi). **OFF ⇒ menu konteks native** (copy/paste/…) muncul kembali (handler `contextmenu` tak meng-`preventDefault`).
+- **Auto-open a terminal on start** ✅ diwujudkan: startup membuka **local shell** default (desktop; di-skip di mobile).
+- **Restore terminal tabs** ✅ diwujudkan: tiap tab terminal menyimpan **`TabDesc`** serializable (local/ssh/serial/telnet) yang di-persist ke store (`openTabs`) tiap `tabs` berubah (di-guard `bootedRef` agar tak menimpa saat boot). Saat start, tab dibuka ulang sebagai **sesi baru single-pane** (layout split & sesi lama tidak dipulihkan; SSH pakai `profileId` → reconnect via keychain). `desc` di-thread lewat `openTerminalTab`/`launchInTab` + semua call-site (launchProfile/launchUserProfile/editor SSH/Launcher local·serial·telnet).
+
+**Settings → Hotkeys (ala Tabby, fungsional)** — `src/hotkeys.ts` + `SettingsPage.tsx` → `HotkeysSection`:
+- **Registry aksi** Moorix-relevan (~24): copy/paste/select-all/clear, zoom in/out/reset, new/close/next/prev tab + tab-1..9, open settings, toggle fullscreen, split right/bottom, close pane. *(Aksi Tabby yang tak ada di Moorix — WinSCP/SFTP/config-sync/broadcast/command-selector/20 tab/9 pane/serial-restart — sengaja tak disertakan.)*
+- **UI**: search box + daftar aksi (label + id), tiap aksi punya **chip binding** (× hapus) + tombol **Add…** yang **meng-capture** keypress berikutnya (Esc batal). Binding disimpan sebagai override per-aksi di `settings.hotkeys` (kosong = pakai default).
+- **Dispatch global** (`App.tsx`): listener `keydown` capture-phase → `eventToCombo` → `buildComboMap(overrides)` → jalankan aksi. Tetap aktif di terminal (deteksi `.xterm-helper-textarea`), tapi **stand down** saat mengetik di field form biasa & saat capture (`isCapturingHotkey`). Combo dinormalisasi (simbol ber-Shift → base, Arrow→Right/Left, dst).
+- **Wiring**: copy/paste/select-all/clear via helper pool baru di `TerminalView.tsx` (`copyPane`/`pastePane`/`clearPane`/`selectAllPane` + field `write`); zoom = `fontSize`; tab/split/close-pane via handler App; fullscreen via `getCurrentWindow().setFullscreen` (capability `core:window:allow-set-fullscreen`/`allow-is-fullscreen` ditambah).
+
 **Lanjutan Fase 10 (polish + rilis):**
 - **Font & Fallback font** di Appearance kini **dropdown** (`FONT_FAMILIES` / `FALLBACK_FONTS`), bukan input teks bebas.
 - **Ikon app diperbesar**: `icon-logo-saja.png` punya padding transparan besar (konten hanya 715×423 di kanvas 1024²). Skrip PowerShell (System.Drawing, di scratchpad) auto-crop alpha bbox → compose ke `icon-source.png` 1024² (logo mengisi ~92%). `pnpm tauri icon icon-source.png` regen semua ikon desktop+mobile.
@@ -527,6 +582,27 @@ Setelah plan ini disetujui:
   - **Versi rilis pertama = `0.1.0-pre.2`** (pra-rilis, sudah di-set di 4 file). Catatan: **flag prerelease GitHub tetap `false`** (endpoint `releases/latest` mengabaikan prerelease) — status pra-rilis dari nomor versi saja. **MSI dibuang** dari `bundle.targets` (WiX menolak versi semver pre-release) → Windows pakai **NSIS** saja (installer yang dipakai updater).
 
 **Verifikasi Fase 10:** `tsc --noEmit` lolos; `cargo`/`tauri dev` **Finished tanpa warning** & window native jalan; HMR Appearance bersih; `tauri icon` regen sukses (logo mengisi frame). (Uji end-to-end unduh+install butuh rilis ber-signing di GitHub — lihat poin di atas.)
+
+### Fase 11 — SFTP file manager ✅ (dual-pane, ala FileZilla di dalam app)
+
+**Backend (Rust):** dep `russh-sftp`. SFTP dibuka sebagai **subsystem channel di koneksi SSH yang sama** (reuse `Handle` via `AppState::ssh_handle`, tanpa login ulang).
+- `ssh.rs`: `SshSession` menyimpan `SshHandle` (alias `Arc<Mutex<Handle>>`) + accessor; `ClientHandler` jadi `pub(crate)`.
+- `state.rs`: registry `sftp` (id → `Arc<SftpSession>`) + registry `transfers` (id → `AtomicBool` untuk cancel).
+- `sftp.rs`: `sftp_open`/`sftp_list`/`sftp_realpath`/`sftp_close`; `sftp_upload`/`sftp_download` **streaming rekursif** (chunk 32KB, walk folder, progress via `Channel<TransferEvent>` di-throttle 256KB, cek cancel tiap loop); `sftp_cancel`; `sftp_mkdir`/`sftp_rename`/`sftp_remove` (**remove rekursif** DFS pre-order → hapus file, lalu dir deepest-first).
+- `localfs.rs`: `local_home`/`local_list`/`local_mkdir`/`local_rename`/`local_remove` (`std::fs`, path pakai "/").
+
+**Frontend (React):**
+- **Tombol folder** di header pane **SSH** (`SplitPane.tsx`) → App buka panel di kanan tab (`App.tsx`, state `sftpTabs` per-tab, pakai `paneSessionId`).
+- `SftpPanel.tsx`: dua sisi **Local (atas)** + **Remote (bawah)** — navigasi (double-click, up, refresh, ketik path), pilih (klik + highlight), tombol transfer ⤓/⤒, **footer progress + cancel**.
+- **Drag-and-drop**: antar-panel (HTML5 draggable + drop target berhighlight) + **drop file dari OS** (`getCurrentWebview().onDragDropEvent` → path lokal, hit-test posisi terhadap rect panel → upload).
+- **Menu klik-kanan** tiap sisi: Rename / Delete / New folder (`window.prompt`/`confirm` untuk MVP).
+
+**Verifikasi Fase 11:** `tsc --noEmit` lolos; `cargo`/`tauri dev` **Finished** & window jalan (API russh-sftp — `create/open/read_dir/create_dir/rename/remove_*/metadata` — cocok). Uji end-to-end transfer butuh server SSH nyata via window native.
+**Polish Fase 11 (lanjutan) ✅:** lebar panel **bisa di-drag** (divider 300–900px, **per-tab** `sftpWidths` di `App.tsx`), **antrean multi-transfer** (`SftpPanel` `queueRef`/`activeRef` — satu per satu, sisanya antre; OS-drop banyak file semua masuk antrean; footer `+N queued`; cancel mengosongkan antrean), **progres per-file** dalam folder rekursif (backend emit `TransferEvent::File{index,count,name}` → footer tampil `nama (i/N)` + bar total), **ikon per-tipe file** (`iconForFile` ext→lucide: image/video/audio/archive/code/text).
+**Polish opsional (belum):** panel lebar tak persist antar-restart, preview file, checksum.
+
+### Settings → Config sync (ala Tabby) ✅ (UI + persist)
+`SettingsPage.tsx` → `ConfigSyncSection`: sub-tab **SYNC** (input **Sync host** + banner info) & **ADVANCED** (toggle **Sync hotkeys** / **Sync window settings** / **Sync Vault**). Setting baru di `settings.tsx`: `syncHost`, `syncHotkeys`, `syncWindow`, `syncVault`. **Catatan:** sinkronisasi nyata butuh **server sync kompatibel** (self-hosted) — Moorix belum menyediakannya; UI + penyimpanan setting sudah siap untuk implementasi backend sync di masa depan.
 
 ---
 

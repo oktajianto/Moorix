@@ -2,11 +2,16 @@ import { useEffect, useState } from "react";
 import { Monitor, Plug, Cpu, Network, ArrowLeft } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { OpenSession, TermOptions } from "./TerminalView";
-import { localOpen, serialOpen, telnetOpen } from "../profiles";
+import { localOpen, serialOpen, telnetOpen, type TabDesc } from "../profiles";
 import { IS_MOBILE } from "../platform";
 
 type Props = {
-  onLaunch: (open: OpenSession, label: string, options?: TermOptions) => void;
+  onLaunch: (
+    open: OpenSession,
+    label: string,
+    options?: TermOptions,
+    desc?: TabDesc,
+  ) => void;
   onSshConnection: () => void;
 };
 
@@ -16,7 +21,12 @@ const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400];
 export function Launcher({ onLaunch, onSshConnection }: Props) {
   const [mode, setMode] = useState<"menu" | "serial" | "telnet">("menu");
 
-  const launchLocal = () => onLaunch(localOpen(""), "local shell");
+  const launchLocal = () =>
+    onLaunch(localOpen(""), "local shell", undefined, {
+      t: "local",
+      command: "",
+      label: "local shell",
+    });
 
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -58,14 +68,26 @@ export function Launcher({ onLaunch, onSshConnection }: Props) {
         {mode === "serial" && (
           <SerialForm
             onBack={() => setMode("menu")}
-            onConnect={(path, baud) => onLaunch(serialOpen(path, baud), `serial ${path}`)}
+            onConnect={(path, baud) =>
+              onLaunch(serialOpen(path, baud), `serial ${path}`, undefined, {
+                t: "serial",
+                path,
+                baud,
+              })
+            }
           />
         )}
 
         {mode === "telnet" && (
           <TelnetForm
             onBack={() => setMode("menu")}
-            onConnect={(host, port) => onLaunch(telnetOpen(host, port), `${host}:${port}`)}
+            onConnect={(host, port) =>
+              onLaunch(telnetOpen(host, port), `${host}:${port}`, undefined, {
+                t: "telnet",
+                host,
+                port,
+              })
+            }
           />
         )}
       </div>

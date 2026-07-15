@@ -23,8 +23,17 @@ import {
   Newspaper,
   RefreshCw,
   Wrench,
+  Search,
+  X,
+  RotateCcw,
   type LucideIcon,
 } from "lucide-react";
+import {
+  HOTKEY_ACTIONS,
+  bindingsFor,
+  eventToCombo,
+  setHotkeyCapture,
+} from "../hotkeys";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -36,6 +45,7 @@ import {
   effectiveFontFamily,
   lineHeightOf,
   type CursorShape,
+  type RendererType,
 } from "../settings";
 import { THEME_NAMES, getTheme } from "../themes";
 import {
@@ -61,9 +71,11 @@ type Props = {
   onEditProfile: (p: UserProfile) => void;
   onDuplicateProfile: (p: UserProfile) => void;
   onDeleteProfile: (id: string) => void;
+  /** Which section to show; `token` changes on every open to force a reset. */
+  sectionRequest: { section: SectionId; token: number };
 };
 
-type SectionId =
+export type SectionId =
   | "application" | "appearance" | "profiles" | "terminal" | "colorscheme"
   | "configsync" | "hotkeys" | "shell" | "ssh" | "vault" | "window" | "configfile";
 
@@ -83,7 +95,13 @@ const SIDEBAR: { id: SectionId; name: string; Icon: LucideIcon; gapAfter?: boole
 ];
 
 export function SettingsPage(props: Props) {
-  const [section, setSection] = useState<SectionId>("profiles");
+  const [section, setSection] = useState<SectionId>(props.sectionRequest.section);
+
+  // Re-open the requested section whenever the Settings tab is (re)opened.
+  useEffect(() => {
+    setSection(props.sectionRequest.section);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.sectionRequest.token]);
 
   return (
     <div className="flex h-full">
@@ -117,6 +135,10 @@ export function SettingsPage(props: Props) {
           <ApplicationSection />
         ) : section === "appearance" ? (
           <AppearanceSection />
+        ) : section === "hotkeys" ? (
+          <HotkeysSection />
+        ) : section === "configsync" ? (
+          <ConfigSyncSection />
         ) : section === "profiles" ? (
           <ProfilesSection {...props} />
         ) : section === "colorscheme" ? (
@@ -868,27 +890,396 @@ const FALLBACK_FONTS = [
 
 function TerminalSection() {
   const { settings, update } = useSettings();
+  const inputStyle = {
+    background: "var(--m-input)",
+    borderColor: "var(--m-input-border)",
+    color: "var(--m-text)",
+  };
+
   return (
-    <div className="max-w-2xl">
-      <h1 className="mb-6 text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Terminal</h1>
-      <div className="flex flex-col gap-5 text-sm">
-        <Row label="Font">
-          <select
-            value={settings.fontFamily}
-            onChange={(e) => update({ fontFamily: e.target.value })}
-            className="w-64 rounded-md border px-3 py-2 outline-none focus:border-cyan-500"
-            style={{ background: "var(--m-input)", borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+    <div className="max-w-3xl">
+      <SectionTitle first>Rendering</SectionTitle>
+      <FieldRow label="Frontend" sublabel="Switches terminal frontend implementation (experimental)">
+        <SelectBox
+          value={settings.rendererType}
+          onChange={(v) => update({ rendererType: v as RendererType })}
+          style={inputStyle}
+          options={[
+            { value: "webgl", label: "xterm (WebGL)" },
+            { value: "dom", label: "xterm (DOM)" },
+          ]}
+        />
+      </FieldRow>
+      <FieldRow label="Scrollback" sublabel="Number of lines kept in the buffer">
+        <NumField
+          value={settings.scrollback}
+          onChange={(v) => update({ scrollback: clamp(v, 0, 500000) })}
+          min={0}
+          max={500000}
+          step={500}
+          className="w-40"
+          style={inputStyle}
+        />
+      </FieldRow>
+      <ToggleRow
+        title="Draw bold text in bright colors"
+        checked={settings.boldBright}
+        onChange={(v) => update({ boldBright: v })}
+      />
+      <ToggleRow
+        title="Sixel graphics support (experimental)"
+        subtitle="Display images via Sixel escape sequences"
+        checked={settings.sixel}
+        onChange={(v) => update({ sixel: v })}
+      />
+
+      <SectionTitle>Keyboard</SectionTitle>
+      <ToggleRow
+        title="Use Alt as the Meta key"
+        subtitle="Lets the shell handle Meta key instead of OS"
+        checked={settings.altIsMeta}
+        onChange={(v) => update({ altIsMeta: v })}
+      />
+      <ToggleRow
+        title="Scroll on input"
+        subtitle="Scrolls the terminal to the bottom on user input"
+        checked={settings.scrollOnInput}
+        onChange={(v) => update({ scrollOnInput: v })}
+      />
+
+      <SectionTitle>Mouse</SectionTitle>
+      <ToggleRow
+        title="Right-click paste"
+        subtitle="Right-click pastes (copies if text is selected). Turn off to show the native context menu (copy / paste / …)."
+        checked={settings.rightClickPaste}
+        onChange={(v) => update({ rightClickPaste: v })}
+      />
+      <ToggleRow
+        title="Paste on middle-click"
+        checked={settings.pasteOnMiddleClick}
+        onChange={(v) => update({ pasteOnMiddleClick: v })}
+      />
+      <FieldRow label="Word separators" sublabel="Double-click selection will stop at these characters">
+        <input
+          value={settings.wordSeparators}
+          onChange={(e) => update({ wordSeparators: e.target.value })}
+          className="w-56 rounded-md border px-3 py-2 font-mono text-sm outline-none focus:border-cyan-500"
+          style={inputStyle}
+        />
+      </FieldRow>
+
+      <SectionTitle>Clipboard</SectionTitle>
+      <ToggleRow
+        title="Copy on select"
+        checked={settings.copyOnSelect}
+        onChange={(v) => update({ copyOnSelect: v })}
+      />
+      <ToggleRow
+        title="Warn on multi-line paste"
+        subtitle="Show a confirmation box when pasting multiple lines"
+        checked={settings.warnMultilinePaste}
+        onChange={(v) => update({ warnMultilinePaste: v })}
+      />
+      <ToggleRow
+        title="Replace line breaks with spaces"
+        subtitle="Flatten pasted text into a single line for terminals that do not support multiline paste"
+        checked={settings.replaceLineBreaks}
+        onChange={(v) => update({ replaceLineBreaks: v })}
+      />
+      <ToggleRow
+        title="Trim whitespace and newlines"
+        subtitle="Remove whitespace and newlines around the copied text"
+        checked={settings.trimWhitespace}
+        onChange={(v) => update({ trimWhitespace: v })}
+      />
+
+      <SectionTitle>Sound</SectionTitle>
+      <FieldRow label="Terminal bell">
+        <Segmented
+          value={settings.bell}
+          onChange={(v) => update({ bell: v })}
+          options={[
+            { value: "off", label: "Off" },
+            { value: "visual", label: "Visual" },
+            { value: "audible", label: "Audible" },
+          ]}
+        />
+      </FieldRow>
+
+      <SectionTitle>Startup</SectionTitle>
+      <ToggleRow
+        title="Auto-open a terminal on app start"
+        checked={settings.autoOpenTerminal}
+        onChange={(v) => update({ autoOpenTerminal: v })}
+      />
+      <ToggleRow
+        title="Restore terminal tabs on app start"
+        checked={settings.restoreTabs}
+        onChange={(v) => update({ restoreTabs: v })}
+      />
+    </div>
+  );
+}
+
+function SectionTitle({ children, first }: { children: React.ReactNode; first?: boolean }) {
+  return (
+    <h2
+      className={`${first ? "" : "mt-10"} mb-2 text-lg font-semibold`}
+      style={{ color: "var(--m-text)" }}
+    >
+      {children}
+    </h2>
+  );
+}
+
+function SelectBox<T extends string>({
+  value,
+  onChange,
+  options,
+  style,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  style?: React.CSSProperties;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+      className="w-64 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+      style={style}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
+
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+}) {
+  return (
+    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: "var(--m-input-border)" }}>
+      {options.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            onClick={() => onChange(o.value)}
+            className="border-l px-4 py-2 text-xs first:border-l-0"
+            style={{
+              borderColor: "var(--m-input-border)",
+              background: active ? "#2563eb" : "var(--m-input)",
+              color: active ? "#fff" : "var(--m-text)",
+            }}
           >
-            {FONT_FAMILIES.map((f) => (<option key={f.value} value={f.value}>{f.label}</option>))}
-          </select>
-        </Row>
-        <Row label={`Font size (${settings.fontSize}px)`}>
-          <input type="range" min={10} max={24} value={settings.fontSize} onChange={(e) => update({ fontSize: Number(e.target.value) })} className="w-64 accent-cyan-500" />
-        </Row>
-        <Row label="Cursor blink">
-          <input type="checkbox" checked={settings.cursorBlink} onChange={(e) => update({ cursorBlink: e.target.checked })} className="h-4 w-4 accent-cyan-500" />
-        </Row>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function HotkeysSection() {
+  const { settings, update } = useSettings();
+  const [query, setQuery] = useState("");
+  const [capturingId, setCapturingId] = useState<string | null>(null);
+
+  const setBindings = (id: string, combos: string[]) =>
+    update({ hotkeys: { ...settings.hotkeys, [id]: combos } });
+
+  const resetBindings = (id: string) => {
+    const next = { ...settings.hotkeys };
+    delete next[id];
+    update({ hotkeys: next });
+  };
+
+  // Capture the next keypress into the action being edited.
+  useEffect(() => {
+    if (!capturingId) return;
+    setHotkeyCapture(true);
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setCapturingId(null);
+        return;
+      }
+      const combo = eventToCombo(e);
+      if (!combo) return; // lone modifier — keep listening
+      const action = HOTKEY_ACTIONS.find((a) => a.id === capturingId);
+      if (action) {
+        const cur = bindingsFor(action, settings.hotkeys);
+        if (!cur.includes(combo)) setBindings(capturingId, [...cur, combo]);
+      }
+      setCapturingId(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      setHotkeyCapture(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capturingId]);
+
+  const q = query.trim().toLowerCase();
+  const list = HOTKEY_ACTIONS.filter(
+    (a) => !q || a.label.toLowerCase().includes(q) || a.id.includes(q),
+  );
+
+  return (
+    <div className="max-w-3xl">
+      <h1 className="mb-5 text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Hotkeys</h1>
+
+      <div className="relative mb-5">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--m-muted)" }} />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search hotkeys"
+          className="w-full rounded-md border py-2.5 pl-9 pr-3 text-sm outline-none focus:border-cyan-500"
+          style={{ background: "var(--m-input)", borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+        />
       </div>
+
+      <div className="flex flex-col">
+        {list.map((action) => {
+          const combos = bindingsFor(action, settings.hotkeys);
+          const capturing = capturingId === action.id;
+          const overridden = settings.hotkeys[action.id] !== undefined;
+          return (
+            <div key={action.id} className="flex items-center justify-between gap-6 py-2.5">
+              <div className="min-w-0">
+                <span className="text-sm font-medium" style={{ color: "var(--m-text)" }}>{action.label}</span>
+                <span className="ml-2 text-xs" style={{ color: "var(--m-muted)" }}>({action.id})</span>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {combos.map((combo) => (
+                  <span
+                    key={combo}
+                    className="flex items-center gap-1.5 rounded border px-2 py-1 text-xs"
+                    style={{ borderColor: "#3b82f6", color: "var(--m-text)", background: "var(--m-input)" }}
+                  >
+                    {combo}
+                    <button
+                      onClick={() => setBindings(action.id, combos.filter((c) => c !== combo))}
+                      className="opacity-60 transition hover:opacity-100"
+                      title="Remove"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+                {capturing ? (
+                  <span className="rounded border border-dashed px-2 py-1 text-xs" style={{ borderColor: "#3b82f6", color: "var(--m-muted)" }}>
+                    Press keys… (Esc)
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setCapturingId(action.id)}
+                    className="rounded px-2 py-1 text-xs transition hover:bg-black/10"
+                    style={{ color: "var(--m-muted)" }}
+                  >
+                    Add…
+                  </button>
+                )}
+                {overridden && (
+                  <button
+                    onClick={() => resetBindings(action.id)}
+                    className="rounded p-1 opacity-60 transition hover:opacity-100"
+                    style={{ color: "var(--m-muted)" }}
+                    title="Reset to default"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ConfigSyncSection() {
+  const { settings, update } = useSettings();
+  const [tab, setTab] = useState<"sync" | "advanced">("sync");
+  const inputStyle = {
+    background: "var(--m-input)",
+    borderColor: "var(--m-input-border)",
+    color: "var(--m-text)",
+  };
+
+  return (
+    <div className="max-w-3xl">
+      <h1 className="text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Config sync</h1>
+      <div className="mt-3 mb-6 flex gap-6 border-b text-sm" style={{ borderColor: "var(--m-border)" }}>
+        {(["sync", "advanced"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="pb-2 font-medium uppercase"
+            style={{
+              color: tab === t ? "var(--m-text)" : "var(--m-muted)",
+              borderBottom: tab === t ? "2px solid #06b6d4" : "2px solid transparent",
+            }}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "sync" ? (
+        <>
+          <FieldRow label="Sync host">
+            <input
+              value={settings.syncHost}
+              onChange={(e) => update({ syncHost: e.target.value })}
+              placeholder="https://sync.example.com"
+              className="w-72 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+              style={inputStyle}
+            />
+          </FieldRow>
+          <div
+            className="mt-4 rounded-md border p-4 text-sm"
+            style={{ borderColor: "#2563eb", background: "rgba(37,99,235,0.08)", color: "var(--m-text)" }}
+          >
+            Config sync requires a compatible sync server (self-hosted). Enter its URL above
+            to sync settings across your devices.{" "}
+            <span style={{ color: "var(--m-muted)" }}>
+              Moorix belum menyediakan server resmi — endpoint bisa kamu sediakan sendiri.
+            </span>
+          </div>
+        </>
+      ) : (
+        <div>
+          <ToggleRow
+            title="Sync hotkeys"
+            checked={settings.syncHotkeys}
+            onChange={(v) => update({ syncHotkeys: v })}
+          />
+          <ToggleRow
+            title="Sync window settings"
+            checked={settings.syncWindow}
+            onChange={(v) => update({ syncWindow: v })}
+          />
+          <ToggleRow
+            title="Sync Vault"
+            checked={settings.syncVault}
+            onChange={(v) => update({ syncVault: v })}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -921,14 +1312,6 @@ function ColorSchemeSection() {
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span style={{ color: "var(--m-text)" }}>{label}</span>
-      {children}
-    </div>
-  );
-}
 
 function Placeholder({ title }: { title: string }) {
   return (

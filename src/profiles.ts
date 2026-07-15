@@ -17,6 +17,15 @@ import { IS_MOBILE } from "./platform";
 
 export type ProfileType = "local" | "ssh";
 
+/** Serialisable descriptor of how a terminal tab was opened, persisted so tabs
+ *  can be reopened on the next launch ("Restore terminal tabs"). Backend
+ *  sessions themselves can't be restored — a fresh session is opened. */
+export type TabDesc =
+  | { t: "local"; command: string; label: string }
+  | { t: "ssh"; profileId: string }
+  | { t: "serial"; path: string; baud: number }
+  | { t: "telnet"; host: string; port: number };
+
 /** Built-in profile (not editable/deletable). */
 export type Profile = {
   id: string;

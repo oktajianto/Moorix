@@ -1,10 +1,12 @@
 mod commands;
 mod forward;
+mod localfs;
 #[cfg(desktop)]
 mod pty;
 mod secrets;
 #[cfg(desktop)]
 mod serial;
+mod sftp;
 mod ssh;
 mod state;
 mod telnet;
@@ -49,6 +51,21 @@ pub fn run() {
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,
+            sftp::sftp_open,
+            sftp::sftp_list,
+            sftp::sftp_realpath,
+            sftp::sftp_close,
+            sftp::sftp_upload,
+            sftp::sftp_download,
+            sftp::sftp_cancel,
+            sftp::sftp_mkdir,
+            sftp::sftp_rename,
+            sftp::sftp_remove,
+            localfs::local_home,
+            localfs::local_list,
+            localfs::local_mkdir,
+            localfs::local_rename,
+            localfs::local_remove,
             open_devtools,
         ])
         .run(tauri::generate_context!())

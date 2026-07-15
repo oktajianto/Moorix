@@ -8,6 +8,8 @@ import {
 import { DEFAULT_THEME } from "./themes";
 
 export type CursorShape = "block" | "bar" | "underline";
+export type RendererType = "webgl" | "dom";
+export type BellMode = "off" | "visual" | "audible";
 
 export type Settings = {
   fontSize: number;
@@ -25,6 +27,34 @@ export type Settings = {
   fallbackFont: string;
   linePadding: number;
   customCSS: string;
+  // Terminal — rendering
+  rendererType: RendererType;
+  scrollback: number;
+  boldBright: boolean;
+  sixel: boolean;
+  // Terminal — keyboard
+  altIsMeta: boolean;
+  scrollOnInput: boolean;
+  // Terminal — mouse
+  rightClickPaste: boolean;
+  pasteOnMiddleClick: boolean;
+  wordSeparators: string;
+  // Terminal — clipboard
+  copyOnSelect: boolean;
+  warnMultilinePaste: boolean;
+  replaceLineBreaks: boolean;
+  trimWhitespace: boolean;
+  // Terminal — sound / startup
+  bell: BellMode;
+  autoOpenTerminal: boolean;
+  restoreTabs: boolean;
+  // Hotkeys — per-action overrides (actionId -> combos). Absent = use defaults.
+  hotkeys: Record<string, string[]>;
+  // Config sync
+  syncHost: string;
+  syncHotkeys: boolean;
+  syncWindow: boolean;
+  syncVault: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -42,6 +72,27 @@ export const DEFAULT_SETTINGS: Settings = {
   fallbackFont: "",
   linePadding: 0,
   customCSS: "",
+  rendererType: "webgl",
+  scrollback: 1000,
+  boldBright: true,
+  sixel: false,
+  altIsMeta: false,
+  scrollOnInput: true,
+  rightClickPaste: true,
+  pasteOnMiddleClick: false,
+  wordSeparators: " ()[]{}'\"`",
+  copyOnSelect: false,
+  warnMultilinePaste: true,
+  replaceLineBreaks: false,
+  trimWhitespace: true,
+  bell: "off",
+  autoOpenTerminal: false,
+  restoreTabs: false,
+  hotkeys: {},
+  syncHost: "",
+  syncHotkeys: true,
+  syncWindow: true,
+  syncVault: true,
 };
 
 /** The effective xterm font stack: main family, plus an optional fallback
