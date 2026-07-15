@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutGrid,
   Paintbrush,
@@ -18,9 +18,25 @@ import {
   ChevronRight,
   Pencil,
   Trash2,
+  Bug,
+  Code2,
+  Newspaper,
+  RefreshCw,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useSettings } from "../settings";
+import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import logo from "../assets/moorix-logo.png";
+import { useToast } from "./Toast";
+import { checkForUpdates } from "../updater";
+import {
+  useSettings,
+  effectiveFontFamily,
+  lineHeightOf,
+  type CursorShape,
+} from "../settings";
 import { THEME_NAMES, getTheme } from "../themes";
 import {
   AVAILABLE_BUILTINS,
@@ -97,7 +113,11 @@ export function SettingsPage(props: Props) {
       </aside>
 
       <div className="flex-1 overflow-y-auto p-8">
-        {section === "profiles" ? (
+        {section === "application" ? (
+          <ApplicationSection />
+        ) : section === "appearance" ? (
+          <AppearanceSection />
+        ) : section === "profiles" ? (
           <ProfilesSection {...props} />
         ) : section === "colorscheme" ? (
           <ColorSchemeSection />
@@ -381,11 +401,469 @@ function UserRow({ p, onLaunch, onEdit, onDelete }: { p: UserProfile; onLaunch: 
   );
 }
 
+const REPO_URL = "https://github.com/oktajianto/Moorix";
+
+function ApplicationSection() {
+  const { settings, update } = useSettings();
+  const toast = useToast();
+  const [version, setVersion] = useState("");
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
+
+  const onCheck = async () => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      await checkForUpdates(toast, { silent: false });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="max-w-3xl">
+      {/* Header: brand + version + external links */}
+      <div className="flex flex-wrap items-start justify-between gap-8">
+        <div>
+          <div className="flex items-center gap-3">
+            <img src={logo} alt="Moorix" className="h-12 w-12 rounded" />
+            <div>
+              <div className="text-3xl font-semibold leading-none" style={{ color: "var(--m-text)" }}>
+                Moorix
+              </div>
+              <div className="mt-1 text-xs" style={{ color: "var(--m-muted)" }}>
+                {version ? `v${version}` : " "}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={onCheck}
+            disabled={checking}
+            className="mt-4 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition hover:bg-black/10 disabled:opacity-50"
+            style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+          >
+            <RefreshCw className={`h-4 w-4 ${checking ? "animate-spin" : ""}`} />
+            Check for updates
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <LinkRow Icon={Bug} title="Report a problem" subtitle="Open a GitHub issue" onClick={() => void openUrl(`${REPO_URL}/issues/new`)} />
+          <LinkRow Icon={Code2} title="GitHub" subtitle="Source code" onClick={() => void openUrl(REPO_URL)} />
+          <LinkRow Icon={Newspaper} title="What's new" subtitle="Show release notes" onClick={() => void openUrl(`${REPO_URL}/releases`)} />
+        </div>
+      </div>
+
+      <h2 className="mt-10 mb-2 text-lg font-semibold" style={{ color: "var(--m-text)" }}>
+        Application settings
+      </h2>
+      <div className="divide-y" style={{ borderColor: "var(--m-border)" }}>
+        <ToggleRow
+          title="Automatic Updates"
+          subtitle="Silently download and install updates from GitHub when available."
+          checked={settings.autoUpdate}
+          onChange={(v) => update({ autoUpdate: v })}
+        />
+        <div className="flex items-center justify-between gap-6 py-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>Debugging</div>
+            <div className="mt-0.5 text-xs" style={{ color: "var(--m-muted)" }}>Open the developer tools for the app window.</div>
+          </div>
+          <button
+            onClick={() => void invoke("open_devtools").catch(() => {})}
+            className="flex shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-sm transition hover:bg-black/10"
+            style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+          >
+            <Wrench className="h-4 w-4" />
+            Open DevTools
+          </button>
+        </div>
+      </div>
+
+      <h2 className="mt-10 mb-2 text-lg font-semibold" style={{ color: "var(--m-text)" }}>
+        Accessibility
+      </h2>
+      <ToggleRow
+        title="Enable animations"
+        subtitle="Turn off to reduce motion across the app."
+        checked={settings.animations}
+        onChange={(v) => update({ animations: v })}
+      />
+    </div>
+  );
+}
+
+function LinkRow({
+  Icon,
+  title,
+  subtitle,
+  onClick,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} className="group flex items-start gap-3 text-left">
+      <Icon className="mt-0.5 h-5 w-5 shrink-0" style={{ color: "var(--m-muted)" }} />
+      <div>
+        <div className="text-sm font-medium leading-tight group-hover:underline" style={{ color: "var(--m-text)" }}>
+          {title}
+        </div>
+        <div className="text-xs" style={{ color: "var(--m-muted)" }}>{subtitle}</div>
+      </div>
+    </button>
+  );
+}
+
+function ToggleRow({
+  title,
+  subtitle,
+  checked,
+  onChange,
+}: {
+  title: string;
+  subtitle?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6 py-4">
+      <div className="min-w-0">
+        <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>{title}</div>
+        {subtitle && <div className="mt-0.5 text-xs" style={{ color: "var(--m-muted)" }}>{subtitle}</div>}
+      </div>
+      <Switch checked={checked} onChange={onChange} />
+    </div>
+  );
+}
+
+function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="relative h-5 w-9 shrink-0 rounded-full transition-colors"
+      style={{ background: checked ? "#2563eb" : "var(--m-input-border)" }}
+    >
+      <span
+        className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
+        style={{ left: checked ? "1.125rem" : "0.125rem" }}
+      />
+    </button>
+  );
+}
+
+function AppearanceSection() {
+  const { settings, update } = useSettings();
+  const inputStyle = {
+    background: "var(--m-input)",
+    borderColor: "var(--m-input-border)",
+    color: "var(--m-text)",
+  };
+
+  return (
+    <div className="max-w-4xl">
+      <h1 className="mb-6 text-2xl font-semibold" style={{ color: "var(--m-text)" }}>
+        Appearance
+      </h1>
+
+      {/* Font family + size */}
+      <FieldRow label="Font">
+        <div className="flex gap-2">
+          <select
+            value={settings.fontFamily}
+            onChange={(e) => update({ fontFamily: e.target.value })}
+            className="w-64 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+            style={inputStyle}
+          >
+            {FONT_FAMILIES.map((f) => (
+              <option key={f.value} value={f.value}>{f.label}</option>
+            ))}
+          </select>
+          <NumField
+            value={settings.fontSize}
+            onChange={(v) => update({ fontSize: clamp(v, 6, 48) })}
+            min={6}
+            max={48}
+            className="w-20"
+            style={inputStyle}
+          />
+        </div>
+      </FieldRow>
+
+      {/* Ligatures + weights on the left, live preview on the right */}
+      <div className="mt-2 grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <div className="flex flex-col">
+          <div className="flex items-center justify-between gap-6 py-3">
+            <span className="text-sm font-medium" style={{ color: "var(--m-text)" }}>
+              Enable font ligatures
+            </span>
+            <Switch
+              checked={settings.fontLigatures}
+              onChange={(v) => update({ fontLigatures: v })}
+            />
+          </div>
+          <FieldRow label="Normal font weight">
+            <NumField
+              value={settings.normalFontWeight}
+              onChange={(v) => update({ normalFontWeight: clamp(v, 100, 900) })}
+              min={100}
+              max={900}
+              step={100}
+              className="w-28"
+              style={inputStyle}
+            />
+          </FieldRow>
+          <FieldRow label="Bold font weight">
+            <NumField
+              value={settings.boldFontWeight}
+              onChange={(v) => update({ boldFontWeight: clamp(v, 100, 900) })}
+              min={100}
+              max={900}
+              step={100}
+              className="w-28"
+              style={inputStyle}
+            />
+          </FieldRow>
+        </div>
+
+        <TerminalPreview />
+      </div>
+
+      {/* Cursor shape */}
+      <FieldRow label="Cursor shape">
+        <div className="flex overflow-hidden rounded-md border" style={{ borderColor: "var(--m-input-border)" }}>
+          {(["block", "bar", "underline"] as CursorShape[]).map((shape) => {
+            const active = settings.cursorShape === shape;
+            return (
+              <button
+                key={shape}
+                onClick={() => update({ cursorShape: shape })}
+                className="flex h-9 w-12 items-center justify-center border-l text-xs first:border-l-0"
+                style={{
+                  borderColor: "var(--m-input-border)",
+                  background: active ? "#2563eb" : "var(--m-input)",
+                  color: active ? "#fff" : "var(--m-text)",
+                }}
+                title={shape}
+              >
+                <CursorGlyph shape={shape} />
+              </button>
+            );
+          })}
+        </div>
+      </FieldRow>
+
+      <div className="flex items-center justify-between gap-6 py-3">
+        <span className="text-sm font-medium" style={{ color: "var(--m-text)" }}>Blink cursor</span>
+        <Switch checked={settings.cursorBlink} onChange={(v) => update({ cursorBlink: v })} />
+      </div>
+
+      <FieldRow label="Minimum contrast ratio">
+        <NumField
+          value={settings.minimumContrastRatio}
+          onChange={(v) => update({ minimumContrastRatio: clamp(v, 1, 21) })}
+          min={1}
+          max={21}
+          step={1}
+          className="w-28"
+          style={inputStyle}
+        />
+      </FieldRow>
+
+      <FieldRow
+        label="Fallback font"
+        sublabel="A second font family used to display characters missing in the main font"
+      >
+        <select
+          value={settings.fallbackFont}
+          onChange={(e) => update({ fallbackFont: e.target.value })}
+          className="w-64 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+          style={inputStyle}
+        >
+          {FALLBACK_FONTS.map((f) => (
+            <option key={f.label} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+      </FieldRow>
+
+      <FieldRow label="Line padding" sublabel="Additional space between lines">
+        <NumField
+          value={settings.linePadding}
+          onChange={(v) => update({ linePadding: clamp(v, 0, 40) })}
+          min={0}
+          max={40}
+          className="w-28"
+          style={inputStyle}
+        />
+      </FieldRow>
+
+      {/* Custom CSS */}
+      <div className="mt-6">
+        <div className="mb-2 text-sm font-medium" style={{ color: "var(--m-text)" }}>Custom CSS</div>
+        <textarea
+          value={settings.customCSS}
+          onChange={(e) => update({ customCSS: e.target.value })}
+          spellCheck={false}
+          rows={5}
+          placeholder="/* * { color: blue !important; } */"
+          className="w-full rounded-md border px-3 py-2 font-mono text-xs outline-none focus:border-cyan-500"
+          style={inputStyle}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Live terminal mock reflecting the current font/weight/ligature/spacing settings. */
+function TerminalPreview() {
+  const { settings } = useSettings();
+  const t = getTheme(settings.themeName);
+  const fg = t.foreground ?? "#e5e5e5";
+  const dim = t.brightBlack ?? "#808080";
+  const green = t.green ?? "#4ec9b0";
+  const blue = t.blue ?? "#569cd6";
+  const cyan = t.cyan ?? "#4dd0e1";
+  const red = t.red ?? "#f44747";
+  const bold = { fontWeight: settings.boldFontWeight } as const;
+
+  const meta = <span style={{ color: dim }}>-rwxr-xr-x 1 root </span>;
+
+  return (
+    <div
+      className="overflow-hidden rounded-md border p-3"
+      style={{
+        borderColor: "var(--m-border)",
+        background: t.background,
+        color: fg,
+        fontFamily: effectiveFontFamily(settings),
+        fontSize: settings.fontSize,
+        lineHeight: lineHeightOf(settings),
+        fontWeight: settings.normalFontWeight,
+        fontFeatureSettings: settings.fontLigatures ? '"liga" 1, "calt" 1' : "normal",
+      }}
+    >
+      <div>
+        <span style={{ ...bold, color: green }}>john@doe-pc</span>
+        <span style={{ color: dim }}>$</span> ls
+        <span
+          className="ml-0.5 inline-block align-middle"
+          style={{ width: "0.55em", height: "1em", background: t.cursor ?? cyan }}
+        />
+      </div>
+      <div>{meta}<span style={{ color: blue }}>Documents</span></div>
+      <div>{meta}<span style={{ background: green, color: t.background }}>Downloads</span></div>
+      <div>{meta}<span style={{ color: blue }}>Pictures</span></div>
+      <div>{meta}<span style={{ ...bold }}>Music</span></div>
+      <div>{meta}<span style={{ color: green }}>実行可能ファイル</span></div>
+      <div>{meta}<span style={{ color: blue }}>sym</span> -&gt; <span style={{ color: cyan, textDecoration: "underline" }}>link</span></div>
+      <div>
+        <span style={{ color: dim }}>Icons: </span>📁 🐚 ⌨{" "}
+        <span style={{ background: red, color: t.background, padding: "0 0.4em" }}>Powerline</span>
+        <span
+          className="inline-block align-middle"
+          style={{
+            width: 0,
+            height: 0,
+            borderTop: "0.6em solid transparent",
+            borderBottom: "0.6em solid transparent",
+            borderLeft: `0.5em solid ${red}`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CursorGlyph({ shape }: { shape: CursorShape }) {
+  if (shape === "block") return <span className="inline-block h-3.5 w-2" style={{ background: "currentColor" }} />;
+  if (shape === "bar") return <span className="inline-block h-3.5 w-0.5" style={{ background: "currentColor" }} />;
+  return <span className="inline-block h-0.5 w-2.5" style={{ background: "currentColor" }} />;
+}
+
+function FieldRow({
+  label,
+  sublabel,
+  children,
+}: {
+  label: string;
+  sublabel?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6 py-3">
+      <div className="min-w-0">
+        <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>{label}</div>
+        {sublabel && <div className="mt-0.5 text-xs" style={{ color: "var(--m-muted)" }}>{sublabel}</div>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function NumField({
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  className,
+  style,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <input
+      type="number"
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      onChange={(e) => {
+        const v = Number(e.target.value);
+        if (!Number.isNaN(v)) onChange(v);
+      }}
+      className={`rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500 ${className ?? ""}`}
+      style={style}
+    />
+  );
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
+
 const FONT_FAMILIES = [
   { label: "Cascadia Code", value: '"Cascadia Code", "JetBrains Mono", Consolas, monospace' },
   { label: "JetBrains Mono", value: '"JetBrains Mono", "Cascadia Code", Consolas, monospace' },
   { label: "Consolas", value: "Consolas, monospace" },
   { label: "Courier New", value: '"Courier New", monospace' },
+];
+
+/** Optional second family appended after the main font, for glyphs it lacks
+ *  (emoji, CJK, box-drawing/Powerline). "None" = no fallback. */
+const FALLBACK_FONTS = [
+  { label: "None", value: "" },
+  { label: "Segoe UI Emoji", value: '"Segoe UI Emoji"' },
+  { label: "Segoe UI Symbol", value: '"Segoe UI Symbol"' },
+  { label: "Noto Sans Mono", value: '"Noto Sans Mono"' },
+  { label: "Yu Gothic (CJK)", value: '"Yu Gothic"' },
+  { label: "MS Gothic (CJK)", value: '"MS Gothic"' },
+  { label: "Consolas", value: "Consolas" },
 ];
 
 function TerminalSection() {

@@ -64,17 +64,27 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Sign the update bundles so the in-app updater accepts them. Add these
+          # two repo secrets (Settings → Secrets and variables → Actions):
+          #   TAURI_SIGNING_PRIVATE_KEY          = contents of src-tauri/updater-signing.key
+          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD = the key password
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Moorix ${{ github.ref_name }}"
           releaseBody: |
-            Pre-release build of Moorix (desktop only).
+            Desktop build of Moorix.
 
             Downloads:
-            - Windows: `.exe` (NSIS) / `.msi`
+            - Windows: `.exe` (NSIS)
             - macOS: `.dmg` (Apple Silicon and Intel)
             - Linux: `.AppImage` / `.deb`
 
             Mobile (Android/iOS) is not part of this release.
-          prerelease: true
+          # Generate + upload latest.json so the auto-updater can read it.
+          includeUpdaterJson: true
+          # Must be a full (non-prerelease, non-draft) release: the updater's
+          # `releases/latest/download/latest.json` endpoint ignores prereleases.
+          prerelease: false
           args: ${{ matrix.args }}

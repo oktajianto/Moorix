@@ -24,6 +24,8 @@ import { SettingsPage } from "./components/SettingsPage";
 import { ProfileEditor } from "./components/ProfileEditor";
 import { Welcome } from "./components/Welcome";
 import { useSettings } from "./settings";
+import { useToast } from "./components/Toast";
+import { checkForUpdates } from "./updater";
 import { getTheme, isLightTheme } from "./themes";
 import {
   AVAILABLE_BUILTINS,
@@ -58,6 +60,7 @@ const WELCOME_KEY = "moorix.welcomed";
 
 function App() {
   const { settings } = useSettings();
+  const toast = useToast();
   const [tabs, setTabs] = useState<Tab[]>([{ id: FIRST_ID, kind: "launcher" }]);
   const [activeId, setActiveId] = useState(FIRST_ID);
   const [activePaneId, setActivePaneId] = useState("");
@@ -77,6 +80,30 @@ function App() {
       isLightTheme(settings.themeName),
     );
   }, [settings.themeName]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("no-animations", !settings.animations);
+  }, [settings.animations]);
+
+  // Appearance → Custom CSS: inject/update a single global <style> element.
+  useEffect(() => {
+    const id = "moorix-custom-css";
+    let el = document.getElementById(id) as HTMLStyleElement | null;
+    if (!el) {
+      el = document.createElement("style");
+      el.id = id;
+      document.head.appendChild(el);
+    }
+    el.textContent = settings.customCSS;
+  }, [settings.customCSS]);
+
+  // Startup auto-update: silently check GitHub Releases; only surfaces a toast
+  // if an update is actually found (then downloads + installs quietly).
+  useEffect(() => {
+    if (settings.autoUpdate) void checkForUpdates(toast, { silent: true });
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const p1 = listen<HostKeyReq>("host-key-prompt", (e) =>

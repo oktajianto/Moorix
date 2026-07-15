@@ -22,6 +22,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-15
 | 7B | Android build → **signed release APK** | ✅ |
 | 8 | Serial (desktop) + Telnet transports | ✅ |
 | 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (Remote -R, SFTP, sync, jump host: ⬜) |
+| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ⬜) |
 
 **Berikutnya (kandidat):** port forwarding Remote (-R) · SFTP file browser · jump host + agent forwarding · sync profil (E2E) · plugin system · profile-editor Serial/Telnet (§17) · toast UI status forward.
 
@@ -488,6 +489,44 @@ Setelah plan ini disetujui:
 - **Remote (-R) belum** — butuh `ClientHandler` menerima channel `forwarded-tcpip` (+ global request `tcpip-forward`). Iterasi berikutnya.
 - **End-to-end belum diuji** (butuh SSH server + service target + UI Tauri native). Cara uji manual: profil SSH → tab PORTS → tambah Local forward (mis. `127.0.0.1:8080 → localhost:80`) → connect → buka `localhost:8080`. Dynamic: set browser SOCKS5 ke `127.0.0.1:<bindPort>`.
 - Error bind (port kepakai) saat ini hanya di-log backend (`eprintln`), belum ada toast UI.
+
+### Fase 10 — Settings → Application + Auto-update silent ✅
+
+**UI (ala Tabby)** — `SettingsPage.tsx` → `ApplicationSection`:
+- Header brand (logo `moorix-logo.png` + versi via `@tauri-apps/api/app` `getVersion()`) + tombol **Check for updates**.
+- Tautan eksternal (buka via `openUrl` plugin-opener): **Report a problem** (`/issues/new`), **GitHub** (source), **What's new** (`/releases`). *Discord sengaja tidak ada (belum).*
+- **Application settings**: toggle **Automatic Updates** (`settings.autoUpdate`), **Debugging → Open DevTools** (`invoke("open_devtools")`).
+- **Accessibility**: toggle **Enable animations** (`settings.animations` → class `.no-animations` mematikan semua transition/animation via `index.css`).
+- Komponen switch/pill sendiri; `settings.tsx` ditambah `autoUpdate` & `animations` (default `true`).
+
+**Auto-update (desktop-only, silent/quiet)**:
+- Plugin: `tauri-plugin-updater` + `tauri-plugin-process` (Rust, di target table non-android/ios) & JS `@tauri-apps/plugin-{updater,process}`. Diregistrasi `#[cfg(desktop)]` di `lib.rs`. Command `open_devtools` (tauri feature `devtools` diaktifkan → jalan juga di release).
+- Capabilities: `updater:default`, `process:default`, `core:app:default`.
+- Config `tauri.conf.json`: `bundle.createUpdaterArtifacts: true`; `plugins.updater.endpoints = [".../releases/latest/download/latest.json"]`, `pubkey` (minisign), `windows.installMode: "quiet"` (**installer tidak muncul**).
+- `src/updater.ts` `checkForUpdates(toast, {silent})`: `check()` → jika ada update, `downloadAndInstall` dengan event `Started/Progress/Finished` → **toast progress** (persen + MB) → `Installing…` → `relaunch()`. Startup App memanggil versi `silent` (hanya muncul kalau benar ada update). Tombol Check memanggil versi non-silent (tampil "Checking…"/"up to date"/error).
+- **Toast system baru**: `src/components/Toast.tsx` (`ToastProvider`/`useToast`), progress bar determinate + indeterminate, dipasang di `main.tsx`. *Bisa dipakai ulang untuk status port-forward, dsb.*
+
+**⚠️ Wajib untuk update benar-benar jalan (belum dikerjakan — butuh aksi user/CI):**
+1. **Signing key** sudah digenerate: `src-tauri/updater-signing.key` (**gitignored, RAHASIA — backup!**) + `.key.pub` (pubkey sudah masuk config). **Hilang key = tak bisa rilis update.**
+2. Publikasikan GitHub Release dengan artefak updater **ber-signing** + file **`latest.json`** (format Tauri) sebagai asset rilis. Set env `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`, kosong) saat `tauri build` (idealnya via GitHub Actions secret).
+3. Selama belum ada `latest.json` di rilis, tombol "Check for updates" akan menampilkan toast **error/"up to date"** (endpoint 404) — itu normal.
+
+**Settings → Appearance (ala Tabby)** — `SettingsPage.tsx` → `AppearanceSection`:
+- Kontrol: **Font** (family text + size), **Enable font ligatures**, **Normal/Bold font weight**, **Cursor shape** (block/bar/underline, segmented), **Blink cursor**, **Minimum contrast ratio**, **Fallback font**, **Line padding**, **Custom CSS** (textarea).
+- **Live preview terminal** (`TerminalPreview`) memakai warna tema aktif + mencerminkan font/weight/ligature/line-padding secara real-time.
+- `settings.tsx` ditambah: `fontLigatures`, `normalFontWeight`, `boldFontWeight`, `cursorShape`, `minimumContrastRatio`, `fallbackFont`, `linePadding`, `customCSS` + helper `effectiveFontFamily()` & `lineHeightOf()`.
+- **Diterapkan ke terminal asli** (`TerminalView.tsx`, live): `fontFamily` (+fallback), `fontWeight`/`fontWeightBold`, `cursorStyle`, `minimumContrastRatio`, `lineHeight`. **Custom CSS** di-inject sebagai `<style>` global (App.tsx). **Ligatures**: DOM renderer + `font-feature-settings` saat aktif (WebGL dilewati) — berlaku untuk terminal yang **baru dibuka** (renderer dipilih saat create).
+
+**Lanjutan Fase 10 (polish + rilis):**
+- **Font & Fallback font** di Appearance kini **dropdown** (`FONT_FAMILIES` / `FALLBACK_FONTS`), bukan input teks bebas.
+- **Ikon app diperbesar**: `icon-logo-saja.png` punya padding transparan besar (konten hanya 715×423 di kanvas 1024²). Skrip PowerShell (System.Drawing, di scratchpad) auto-crop alpha bbox → compose ke `icon-source.png` 1024² (logo mengisi ~92%). `pnpm tauri icon icon-source.png` regen semua ikon desktop+mobile.
+- **Ikon installer = ikon app**: `tauri.conf.json` → `bundle.windows.nsis.installerIcon = "icons/icon.ico"`.
+- **CI rilis** `.github/workflows/release.yml`: pada push tag `v*`, `tauri-apps/tauri-action` build Windows/macOS(universal)/Linux, **sign** (env `TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` dari secrets), `includeUpdaterJson: true` → upload **`latest.json`**. `prerelease: false` (wajib — endpoint `releases/latest` mengabaikan prerelease).
+  - **Aksi user sebelum rilis**: tambah **2 secret** repo — `TAURI_SIGNING_PRIVATE_KEY` (isi `src-tauri/updater-signing.key`) + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (password key, karena key kini **ber-password**); **bump `version`** di `package.json` + `tauri.conf.json` + `Cargo.toml` (updater membandingkan versi ini, bukan tag) sebelum tag & push.
+  - Key di-regenerate **ber-password** (pubkey di `tauri.conf.json` sudah diperbarui). Private key + password **RAHASIA & wajib di-backup** — hilang = tak bisa rilis update.
+  - **Versi rilis pertama = `0.1.0-pre.2`** (pra-rilis, sudah di-set di 4 file). Catatan: **flag prerelease GitHub tetap `false`** (endpoint `releases/latest` mengabaikan prerelease) — status pra-rilis dari nomor versi saja. **MSI dibuang** dari `bundle.targets` (WiX menolak versi semver pre-release) → Windows pakai **NSIS** saja (installer yang dipakai updater).
+
+**Verifikasi Fase 10:** `tsc --noEmit` lolos; `cargo`/`tauri dev` **Finished tanpa warning** & window native jalan; HMR Appearance bersih; `tauri icon` regen sukses (logo mengisi frame). (Uji end-to-end unduh+install butuh rilis ber-signing di GitHub — lihat poin di atas.)
 
 ---
 

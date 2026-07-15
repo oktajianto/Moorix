@@ -1,6 +1,6 @@
 [package]
 name = "moorix"
-version = "0.1.0"
+version = "0.1.0-pre.2"
 description = "Moorix — cross-platform terminal & SSH client"
 authors = ["Hammam Oktajianto"]
 license-file = "../LICENSE"
@@ -20,7 +20,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-os = "2"
 serde = { version = "1", features = ["derive"] }
@@ -37,4 +37,7 @@ tauri-plugin-store = "2"
 portable-pty = "0.9"
 serialport = "4"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+# Auto-update from GitHub Releases (desktop only; mobile updates via app stores).
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 

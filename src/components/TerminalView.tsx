@@ -1,11 +1,16 @@
 import { useEffect, useRef } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type FontWeight } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
-import { useSettings, type Settings } from "../settings";
+import {
+  useSettings,
+  effectiveFontFamily,
+  lineHeightOf,
+  type Settings,
+} from "../settings";
 import { getTheme } from "../themes";
 import type { BackspaceMode, LoginScript } from "../profiles";
 
@@ -80,6 +85,13 @@ function backspaceSeq(mode: BackspaceMode | undefined): string | null {
   }
 }
 
+/** Toggle ligatures on a terminal's DOM via font-feature-settings. Only the DOM
+ *  renderer honours this; the WebGL renderer (used when ligatures are off) can't. */
+function applyLigatures(term: Terminal, on: boolean): void {
+  const el = term.element;
+  if (el) el.style.fontFeatureSettings = on ? '"liga" 1, "calt" 1' : "normal";
+}
+
 /** Strip the common ANSI/OSC escape sequences so expect-matching sees plain text. */
 function stripAnsi(s: string): string {
   return s
@@ -112,9 +124,14 @@ function createEntry(
   const settingsRef: Ref<Settings> = { current: settings };
 
   const term = new Terminal({
-    fontFamily: settings.fontFamily,
+    fontFamily: effectiveFontFamily(settings),
     fontSize: settings.fontSize,
+    fontWeight: settings.normalFontWeight as FontWeight,
+    fontWeightBold: settings.boldFontWeight as FontWeight,
     cursorBlink: settings.cursorBlink,
+    cursorStyle: settings.cursorShape,
+    minimumContrastRatio: settings.minimumContrastRatio,
+    lineHeight: lineHeightOf(settings),
     theme: getTheme(optionsRef.current.colorScheme || settings.themeName),
   });
 
@@ -122,11 +139,17 @@ function createEntry(
   term.loadAddon(fit);
   term.open(container);
 
-  try {
-    term.loadAddon(new WebglAddon());
-  } catch {
-    // WebGL unavailable — xterm falls back to its canvas/DOM renderer.
+  // The WebGL renderer is fast but rasterises glyphs individually, so it can't
+  // shape ligatures. When ligatures are enabled we fall back to the DOM renderer
+  // (which honours font-feature-settings). Applies to newly opened terminals.
+  if (!settings.fontLigatures) {
+    try {
+      term.loadAddon(new WebglAddon());
+    } catch {
+      // WebGL unavailable — xterm falls back to its canvas/DOM renderer.
+    }
   }
+  applyLigatures(term, settings.fontLigatures);
   fit.fit();
 
   const sendData = (data: string) => {
@@ -339,8 +362,14 @@ export function TerminalView({
 
     const term = entry.term;
     term.options.fontSize = settings.fontSize;
-    term.options.fontFamily = settings.fontFamily;
+    term.options.fontFamily = effectiveFontFamily(settings);
+    term.options.fontWeight = settings.normalFontWeight as FontWeight;
+    term.options.fontWeightBold = settings.boldFontWeight as FontWeight;
     term.options.cursorBlink = settings.cursorBlink;
+    term.options.cursorStyle = settings.cursorShape;
+    term.options.minimumContrastRatio = settings.minimumContrastRatio;
+    term.options.lineHeight = lineHeightOf(settings);
+    applyLigatures(term, settings.fontLigatures);
     term.options.theme = getTheme(
       entry.options.current.colorScheme || settings.themeName,
     );

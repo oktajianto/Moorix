@@ -18,6 +18,11 @@ dist-ssr
 keystore.properties
 key.properties
 
+# Updater signing — NEVER commit the private key (only the .pub is safe)
+updater-signing.key
+*.updater.key
+TAURI_SIGNING_PRIVATE_KEY*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
