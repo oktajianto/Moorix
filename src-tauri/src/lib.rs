@@ -1,5 +1,6 @@
 mod commands;
 mod forward;
+mod cloud_auth;
 mod localfs;
 #[cfg(desktop)]
 mod pty;
@@ -9,6 +10,7 @@ mod serial;
 mod sftp;
 mod ssh;
 mod state;
+mod sync;
 mod telnet;
 
 use state::AppState;
@@ -63,6 +65,9 @@ pub fn run() {
             sftp::sftp_remove,
             sftp::sftp_preview,
             sftp::sftp_checksum,
+            sftp::sftp_compress,
+            sftp::sftp_extract,
+            sftp::sftp_paste,
             localfs::local_home,
             localfs::local_list,
             localfs::local_mkdir,
@@ -70,6 +75,13 @@ pub fn run() {
             localfs::local_remove,
             localfs::local_preview,
             localfs::local_checksum,
+            localfs::local_compress,
+            localfs::local_extract,
+            localfs::local_paste,
+            sync::export_sync_data,
+            sync::import_sync_data,
+            cloud_auth::start_google_login,
+            cloud_auth::exchange_google_token,
             open_devtools,
         ])
         .run(tauri::generate_context!())

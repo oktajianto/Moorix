@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "../settings";
 import { DEFAULT_THEME } from "../themes";
 import logo from "../assets/moorix-logo.png";
@@ -66,12 +67,30 @@ export function Welcome({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        <button
-          onClick={onClose}
-          className="mt-10 rounded-md bg-cyan-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-cyan-500"
-        >
-          Get started
-        </button>
+        <div className="mt-8 flex flex-col gap-3">
+          <button
+            onClick={onClose}
+            className="rounded-md bg-cyan-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-cyan-500"
+          >
+            Get started
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const code = await invoke<string>("start_google_login");
+                const token = await invoke<{ access_token: string }>("exchange_google_token", { code });
+                alert("Login sukses! Access token: " + token.access_token.substring(0, 10) + "...");
+                // Note: The rest of the download & import logic would continue here
+              } catch (err: any) {
+                alert("Gagal login: " + err);
+              }
+            }}
+            className="rounded-md border px-5 py-2.5 text-sm font-medium transition hover:bg-black/20"
+            style={{ borderColor: "var(--m-border)", color: "var(--m-text)" }}
+          >
+            Pulihkan dari Google Drive
+          </button>
+        </div>
       </div>
     </div>
   );

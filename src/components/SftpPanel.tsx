@@ -114,8 +114,12 @@ export function SftpPanel({
   const [remoteEntries, setRemoteEntries] = useState<Entry[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
 
-  const [selLocal, setSelLocal] = useState<string | null>(null);
-  const [selRemote, setSelRemote] = useState<string | null>(null);
+  const [selLocal, setSelLocal] = useState<Set<string>>(new Set());
+  const [lastSelLocal, setLastSelLocal] = useState<string | null>(null);
+  const [selRemote, setSelRemote] = useState<Set<string>>(new Set());
+  const [lastSelRemote, setLastSelRemote] = useState<string | null>(null);
+  const [clipboard, setClipboard] = useState<{ op: "copy" | "cut"; side: "local" | "remote"; paths: string[]; baseDir: string } | null>(null);
+  const [topHeight, setTopHeight] = useState<number>(50);
   const [xfer, setXfer] = useState<Xfer | null>(null);
   const [queued, setQueued] = useState(0);
   const [menu, setMenu] = useState<{
@@ -248,10 +252,92 @@ export function SftpPanel({
     }
   };
 
+  const handleSelect = (side: "local" | "remote", name: string, isShift: boolean, isCtrl: boolean) => {
+    const entries = side === "local" ? localEntries : remoteEntries;
+    const sel = side === "local" ? selLocal : selRemote;
+    const setSel = side === "local" ? setSelLocal : setSelRemote;
+    const lastSel = side === "local" ? lastSelLocal : lastSelRemote;
+    const setLastSel = side === "local" ? setLastSelLocal : setLastSelRemote;
+
+    if (isCtrl) {
+      const newSel = new Set(sel);
+      if (newSel.has(name)) newSel.delete(name);
+      else newSel.add(name);
+      setSel(newSel);
+      setLastSel(name);
+    } else if (isShift && lastSel) {
+      const idx1 = entries.findIndex((e) => e.name === lastSel);
+      const idx2 = entries.findIndex((e) => e.name === name);
+      if (idx1 >= 0 && idx2 >= 0) {
+        const start = Math.min(idx1, idx2);
+        const end = Math.max(idx1, idx2);
+        const newSel = new Set(sel);
+        for (let i = start; i <= end; i++) {
+          newSel.add(entries[i].name);
+        }
+        setSel(newSel);
+      }
+    } else {
+      setSel(new Set([name]));
+      setLastSel(name);
+    }
+  };
+
+  const getTargets = (side: "local" | "remote", name: string): string[] => {
+    const sel = side === "local" ? selLocal : selRemote;
+    return sel.has(name) ? Array.from(sel) : [name];
+  };
+
+  const doCopy = (side: "local" | "remote", name: string) => {
+    setClipboard({ op: "copy", side, paths: getTargets(side, name), baseDir: opDir(side) });
+  };
+  const doCut = (side: "local" | "remote", name: string) => {
+    setClipboard({ op: "cut", side, paths: getTargets(side, name), baseDir: opDir(side) });
+  };
+  const doPaste = (side: "local" | "remote") => {
+    if (!clipboard) return;
+    if (clipboard.side !== side) {
+      clipboard.paths.forEach((p) => {
+        runTransfer(side === "local" ? "down" : "up", joinPath(clipboard.baseDir, p));
+      });
+      if (clipboard.op === "cut") setClipboard(null);
+    } else {
+      const p = side === "local"
+        ? invoke("local_paste", { op: clipboard.op, srcDir: clipboard.baseDir, destDir: opDir(side), names: clipboard.paths })
+        : invoke("sftp_paste", { sftpId, op: clipboard.op, srcDir: clipboard.baseDir, destDir: opDir(side), names: clipboard.paths });
+      p.then(() => {
+        opRefresh(side);
+        if (clipboard.op === "cut") setClipboard(null);
+      }).catch(opErr);
+    }
+  };
+  const doCompress = (side: "local" | "remote", name: string) => {
+    const zipName = window.prompt("Archive name:", name + ".zip")?.trim();
+    if (!zipName) return;
+    const paths = getTargets(side, name);
+    const p = side === "local"
+      ? invoke("local_compress", { dir: opDir(side), dest: zipName, names: paths })
+      : invoke("sftp_compress", { sftpId, dir: opDir(side), dest: zipName, names: paths });
+    p.then(() => opRefresh(side)).catch(opErr);
+  };
+  const doExtract = (side: "local" | "remote", name: string) => {
+    const p = side === "local"
+      ? invoke("local_extract", { path: joinPath(opDir(side), name) })
+      : invoke("sftp_extract", { sftpId, path: joinPath(opDir(side), name) });
+    p.then(() => opRefresh(side)).catch(opErr);
+  };
+  const doOpenInTerminal = (side: "local" | "remote", name: string) => {
+    if (side !== "remote") return;
+    const path = joinPath(opDir(side), name);
+    const bytes = Array.from(new TextEncoder().encode(`cd "${path}"\n`));
+    invoke("session_write", { id: sessionId, data: bytes }).catch(opErr);
+  };
+
   const startTransfer = (dir: XferDir) => {
     const sel = dir === "up" ? selLocal : selRemote;
-    if (!sel) return;
-    runTransfer(dir, dir === "up" ? joinPath(localPath, sel) : joinPath(remotePath, sel));
+    sel.forEach((name) => {
+      runTransfer(dir, dir === "up" ? joinPath(localPath, name) : joinPath(remotePath, name));
+    });
   };
 
   const cancelTransfer = () => {
@@ -300,8 +386,8 @@ export function SftpPanel({
         : invoke("sftp_remove", { sftpId, path });
     p.then(() => {
       opRefresh(side);
-      if (side === "local") setSelLocal(null);
-      else setSelRemote(null);
+      if (side === "local") setSelLocal(new Set());
+      else setSelRemote(new Set());
     }).catch(opErr);
   };
 
@@ -381,69 +467,100 @@ export function SftpPanel({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <FileHalf
-          title="Local"
-          Icon={HardDrive}
-          side="local"
-          path={localPath}
-          entries={localEntries}
-          loading={localLoading}
-          selected={selLocal}
-          onSelect={setSelLocal}
-          onDragItem={(name) => (dragRef.current = { side: "local", name })}
-          onDropItem={() => onDropInto("local")}
-          onContext={(name, e) => setMenu({ side: "local", name, x: e.clientX, y: e.clientY })}
-          setPreview={setPreview}
-          onOpen={(name) => {
-            setSelLocal(null);
-            setLocalPath(joinPath(localPath, name));
-          }}
-          onUp={() => {
-            setSelLocal(null);
-            setLocalPath(parentPath(localPath));
-          }}
-          onRefresh={() => loadLocal(localPath)}
-          onPath={setLocalPath}
-          transfer={{
-            Icon: ArrowDownToLine,
-            title: "Upload selected to remote",
-            onClick: () => startTransfer("up"),
-            disabled: !selLocal || !!xfer || !sftpId,
-          }}
-        />
-        <div className="h-1.5 shrink-0" style={{ background: "var(--m-border)" }} />
-        <FileHalf
-          title="Remote (VPS)"
-          Icon={Server}
-          side="remote"
-          path={remotePath}
-          entries={remoteEntries}
-          loading={remoteLoading}
-          disabled={!sftpId}
-          selected={selRemote}
-          onSelect={setSelRemote}
-          onDragItem={(name) => (dragRef.current = { side: "remote", name })}
-          onDropItem={() => onDropInto("remote")}
-          onContext={(name, e) => setMenu({ side: "remote", name, x: e.clientX, y: e.clientY })}
-          setPreview={setPreview}
-          onOpen={(name) => {
-            setSelRemote(null);
-            setRemotePath(joinPath(remotePath, name));
-          }}
-          onUp={() => {
-            setSelRemote(null);
-            setRemotePath(parentPath(remotePath));
-          }}
-          onRefresh={() => sftpId && loadRemote(sftpId, remotePath)}
-          onPath={setRemotePath}
-          transfer={{
-            Icon: ArrowUpToLine,
-            title: "Download selected to local",
-            onClick: () => startTransfer("down"),
-            disabled: !selRemote || !!xfer,
+      <div className="flex min-h-0 flex-1 flex-col" ref={rootRef}>
+        <div style={{ height: `${topHeight}%`, minHeight: '20%' }} className="flex flex-col">
+          <FileHalf
+            title="Local"
+            Icon={HardDrive}
+            side="local"
+            path={localPath}
+            entries={localEntries}
+            loading={localLoading}
+            selected={selLocal}
+            onSelect={(name, shift, ctrl) => handleSelect("local", name, shift, ctrl)}
+            onDragItem={(name) => (dragRef.current = { side: "local", name })}
+            onDropItem={() => onDropInto("local")}
+            onContext={(name, e) => setMenu({ side: "local", name, x: e.clientX, y: e.clientY })}
+            setPreview={setPreview}
+            onOpen={(name) => {
+              setSelLocal(new Set());
+              setLocalPath(joinPath(localPath, name));
+            }}
+            onUp={() => {
+              setSelLocal(new Set());
+              setLocalPath(parentPath(localPath));
+            }}
+            onRefresh={() => loadLocal(localPath)}
+            onPath={setLocalPath}
+            transfer={{
+              Icon: ArrowDownToLine,
+              title: "Upload selected to remote",
+              onClick: () => startTransfer("up"),
+              disabled: selLocal.size === 0 || !!xfer || !sftpId,
+            }}
+          />
+        </div>
+        
+        <div 
+          className="h-1.5 shrink-0 cursor-row-resize hover:bg-cyan-500/50 transition-colors z-10"
+          style={{ background: "var(--m-border)" }} 
+          onPointerDown={(e) => {
+            const startY = e.clientY;
+            const startH = topHeight;
+            const container = rootRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            
+            const onMove = (ev: PointerEvent) => {
+              const deltaY = ev.clientY - startY;
+              const deltaPct = (deltaY / rect.height) * 100;
+              let newH = startH + deltaPct;
+              if (newH < 20) newH = 20;
+              if (newH > 80) newH = 80;
+              setTopHeight(newH);
+            };
+            const onUp = () => {
+              window.removeEventListener("pointermove", onMove);
+              window.removeEventListener("pointerup", onUp);
+            };
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onUp);
           }}
         />
+
+        <div style={{ height: `${100 - topHeight}%`, minHeight: '20%' }} className="flex flex-col">
+          <FileHalf
+            title="Remote (VPS)"
+            Icon={Server}
+            side="remote"
+            path={remotePath}
+            entries={remoteEntries}
+            loading={remoteLoading}
+            disabled={!sftpId}
+            selected={selRemote}
+            onSelect={(name, shift, ctrl) => handleSelect("remote", name, shift, ctrl)}
+            onDragItem={(name) => (dragRef.current = { side: "remote", name })}
+            onDropItem={() => onDropInto("remote")}
+            onContext={(name, e) => setMenu({ side: "remote", name, x: e.clientX, y: e.clientY })}
+            setPreview={setPreview}
+            onOpen={(name) => {
+              setSelRemote(new Set());
+              setRemotePath(joinPath(remotePath, name));
+            }}
+            onUp={() => {
+              setSelRemote(new Set());
+              setRemotePath(parentPath(remotePath));
+            }}
+            onRefresh={() => sftpId && loadRemote(sftpId, remotePath)}
+            onPath={setRemotePath}
+            transfer={{
+              Icon: ArrowUpToLine,
+              title: "Download selected to local",
+              onClick: () => startTransfer("down"),
+              disabled: selRemote.size === 0 || !!xfer,
+            }}
+          />
+        </div>
       </div>
 
       {xfer && (
@@ -496,6 +613,27 @@ export function SftpPanel({
           >
             {menu.name && (
               <>
+                {menu.side === "remote" && (
+                  <MenuItem onClick={() => { doOpenInTerminal(menu.side, menu.name!); setMenu(null); }}>
+                    Open in Terminal
+                  </MenuItem>
+                )}
+                <MenuItem onClick={() => { doCopy(menu.side, menu.name!); setMenu(null); }}>
+                  Copy
+                </MenuItem>
+                <MenuItem onClick={() => { doCut(menu.side, menu.name!); setMenu(null); }}>
+                  Cut
+                </MenuItem>
+                <div className="my-1 border-t" style={{ borderColor: "var(--m-border)" }} />
+                <MenuItem onClick={() => { doCompress(menu.side, menu.name!); setMenu(null); }}>
+                  Compress to ZIP
+                </MenuItem>
+                {(menu.name.endsWith(".zip") || menu.name.endsWith(".tar.gz") || menu.name.endsWith(".tar")) && (
+                  <MenuItem onClick={() => { doExtract(menu.side, menu.name!); setMenu(null); }}>
+                    Extract
+                  </MenuItem>
+                )}
+                <div className="my-1 border-t" style={{ borderColor: "var(--m-border)" }} />
                 <MenuItem onClick={() => { doRename(menu.side, menu.name!); setMenu(null); }}>
                   Rename…
                 </MenuItem>
@@ -508,6 +646,9 @@ export function SftpPanel({
                 <div className="my-1 border-t" style={{ borderColor: "var(--m-border)" }} />
               </>
             )}
+            <MenuItem disabled={!clipboard} onClick={() => { doPaste(menu.side); setMenu(null); }}>
+              Paste
+            </MenuItem>
             <MenuItem onClick={() => { doMkdir(menu.side); setMenu(null); }}>
               New folder…
             </MenuItem>
@@ -669,15 +810,17 @@ function MenuItem({
   children,
   onClick,
   danger,
+  disabled,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
-      onClick={onClick}
-      className="block w-full px-3 py-1.5 text-left text-xs hover:bg-black/10"
+      onClick={() => { if (!disabled) onClick(); }}
+      className={`block w-full px-3 py-1.5 text-left text-xs ${disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-black/10"}`}
       style={{ color: danger ? "#ef4444" : "var(--m-text)" }}
     >
       {children}
@@ -712,8 +855,8 @@ function FileHalf({
   entries: Entry[];
   loading: boolean;
   disabled?: boolean;
-  selected: string | null;
-  onSelect: (name: string) => void;
+  selected: Set<string>;
+  onSelect: (name: string, isShift: boolean, isCtrl: boolean) => void;
   onOpen: (name: string) => void;
   onUp: () => void;
   onRefresh: () => void;
@@ -823,7 +966,7 @@ function FileHalf({
                 ev.dataTransfer.setData("text/plain", `${side}:${e.name}`);
                 ev.dataTransfer.effectAllowed = "copy";
               }}
-              onClick={() => onSelect(e.name)}
+              onClick={(ev) => onSelect(e.name, ev.shiftKey, ev.metaKey || ev.ctrlKey)}
                 onDoubleClick={() => {
                   if (e.isDir) onOpen(e.name);
                   else setPreview({ path: joinPath(path, e.name), name: e.name, isLocal: side === "local" });
@@ -831,13 +974,13 @@ function FileHalf({
               onContextMenu={(ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
-                onSelect(e.name);
+                if (!selected.has(e.name)) onSelect(e.name, false, false);
                 onContext(e.name, ev);
               }}
               className="flex w-full items-center gap-2 px-3 py-1 text-left text-xs"
               style={{
                 color: "var(--m-text)",
-                background: selected === e.name ? "var(--m-hover)" : "transparent",
+                background: selected.has(e.name) ? "var(--m-hover)" : "transparent",
               }}
               title={e.name}
             >

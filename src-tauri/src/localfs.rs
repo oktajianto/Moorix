@@ -112,3 +112,60 @@ pub fn local_checksum(path: String) -> Result<String, String> {
     }
     Ok(s)
 }
+
+
+#[tauri::command]
+pub fn local_compress(dir: String, dest: String, names: Vec<String>) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("tar");
+    cmd.current_dir(&dir);
+    cmd.arg("-a").arg("-c").arg("-f").arg(&dest);
+    for name in names {
+        cmd.arg(&name);
+    }
+    let status = cmd.status().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!("tar failed: {}", status));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn local_extract(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    let dir = p.parent().unwrap_or(std::path::Path::new("."));
+    let mut cmd = std::process::Command::new("tar");
+    cmd.current_dir(dir);
+    cmd.arg("-x").arg("-f").arg(p.file_name().unwrap());
+    let status = cmd.status().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!("tar failed: {}", status));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn local_paste(op: String, src_dir: String, dest_dir: String, names: Vec<String>) -> Result<(), String> {
+    for name in names {
+        let src = std::path::Path::new(&src_dir).join(&name);
+        let dst = std::path::Path::new(&dest_dir).join(&name);
+        if op == "cut" {
+            std::fs::rename(&src, &dst).map_err(|e| e.to_string())?;
+        } else {
+            copy_dir_all(&src, &dst).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    if src.as_ref().is_dir() {
+        std::fs::create_dir_all(&dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(src, dst)?;
+    }
+    Ok(())
+}

@@ -523,3 +523,88 @@ async fn do_download(
     }
     Ok(true)
 }
+
+
+#[tauri::command]
+pub async fn sftp_compress(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    dir: String,
+    dest: String,
+    names: Vec<String>,
+) -> Result<(), String> {
+    let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
+    let mut channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
+    
+    // Build tar zip command
+    let names_escaped: Vec<String> = names.iter().map(|n| format!("'{}'", n.replace("'", "'\''"))).collect();
+    let dest_escaped = format!("'{}'", dest.replace("'", "'\''"));
+    let cmd = format!("cd '{}' && zip -r {} {}", dir.replace("'", "'\''"), dest_escaped, names_escaped.join(" "));
+    
+    channel.exec(true, &cmd).await.map_err(|e| e.to_string())?;
+    wait_channel(channel).await
+}
+
+#[tauri::command]
+pub async fn sftp_extract(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> Result<(), String> {
+    let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
+    let mut channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
+    
+    let path_escaped = format!("'{}'", path.replace("'", "'\''"));
+    let dir_escaped = format!("'{}'", path.rsplit_once('/').unwrap_or((".", &path)).0.replace("'", "'\''"));
+    
+    let cmd = if path.ends_with(".zip") {
+        format!("cd {} && unzip -o {}", dir_escaped, path_escaped)
+    } else {
+        format!("cd {} && tar -xzf {}", dir_escaped, path_escaped)
+    };
+    
+    channel.exec(true, &cmd).await.map_err(|e| e.to_string())?;
+    wait_channel(channel).await
+}
+
+#[tauri::command]
+pub async fn sftp_paste(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    op: String,
+    src_dir: String,
+    dest_dir: String,
+    names: Vec<String>,
+) -> Result<(), String> {
+    let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
+    let mut channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
+    
+    let cmd_base = if op == "cut" { "mv" } else { "cp -r" };
+    let names_escaped: Vec<String> = names.iter().map(|n| format!("'{}'", n.replace("'", "'\''"))).collect();
+    let dest_escaped = format!("'{}'", dest_dir.replace("'", "'\''"));
+    
+    let cmd = format!("cd '{}' && {} {} {}", src_dir.replace("'", "'\''"), cmd_base, names_escaped.join(" "), dest_escaped);
+    
+    channel.exec(true, &cmd).await.map_err(|e| e.to_string())?;
+    wait_channel(channel).await
+}
+
+async fn wait_channel(mut channel: russh::client::Channel<russh::client::Msg>) -> Result<(), String> {
+    let mut exit_status = 0;
+    loop {
+        if let Some(msg) = channel.wait().await {
+            match msg {
+                russh::ChannelMsg::ExitStatus { exit_status: s } => exit_status = s,
+                russh::ChannelMsg::Close => break,
+                russh::ChannelMsg::Eof => {},
+                _ => {}
+            }
+        } else {
+            break;
+        }
+    }
+    if exit_status != 0 {
+        return Err(format!("Command failed with status {}", exit_status));
+    }
+    Ok(())
+}
