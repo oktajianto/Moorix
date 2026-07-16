@@ -1,6 +1,5 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
 use tiny_http::{Response, Server};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -41,7 +40,7 @@ pub fn start_google_login(app: tauri::AppHandle) -> Result<String, String> {
     let server = Server::http("127.0.0.1:8484").map_err(|e| e.to_string())?;
 
     for request in server.incoming_requests() {
-        let url = request.url();
+        let url = request.url().to_string();
         if url.starts_with("/callback") {
             // parse ?code=...
             if let Some(query) = url.split('?').nth(1) {
@@ -49,18 +48,16 @@ pub fn start_google_login(app: tauri::AppHandle) -> Result<String, String> {
                     let mut parts = pair.split('=');
                     if parts.next() == Some("code") {
                         if let Some(code) = parts.next() {
-                            let mut req = request;
                             let html = "<html><body><h1>Login Berhasil!</h1><p>Anda bisa menutup tab ini dan kembali ke aplikasi.</p></body></html>";
                             let response = Response::from_string(html);
-                            let _ = req.respond(response);
+                            let _ = request.respond(response);
                             return Ok(code.to_string());
                         }
                     }
                 }
             }
-            let mut req = request;
             let response = Response::from_string("Gagal mendapatkan kode.");
-            let _ = req.respond(response);
+            let _ = request.respond(response);
             return Err("Authorization failed.".to_string());
         }
     }

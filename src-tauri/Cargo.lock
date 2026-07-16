@@ -331,7 +331,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "144e573728da132683b9488acd528274c790e07fc06ff81ee29f9d8f8b1041e0"
 dependencies = [
  "blowfish",
- "pbkdf2",
+ "pbkdf2 0.13.0",
  "sha2 0.11.0",
 ]
 
@@ -1095,6 +1095,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
+ "subtle",
 ]
 
 [[package]]
@@ -2082,7 +2083,16 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa26c720c68b866f2c96ef5c1264b3e6f473fe5d4ce61cd44bbe913e553018"
 dependencies = [
- "hmac",
+ "hmac 0.13.0",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2878,7 +2888,7 @@ version = "0.1.0-pre.4"
 dependencies = [
  "aes-gcm",
  "keyring",
- "pbkdf2",
+ "pbkdf2 0.12.2",
  "portable-pty",
  "rand",
  "reqwest",
@@ -3444,12 +3454,22 @@ dependencies = [
 
 [[package]]
 name = "pbkdf2"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
+dependencies = [
+ "digest 0.10.7",
+ "hmac 0.12.1",
+]
+
+[[package]]
+name = "pbkdf2"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112d82ceb8c5bf524d9af484d4e4970c9fd5a0cc15ba14ad93dccd28873b0629"
 dependencies = [
  "digest 0.11.3",
- "hmac",
+ "hmac 0.13.0",
 ]
 
 [[package]]
@@ -3567,7 +3587,7 @@ dependencies = [
  "aes-gcm",
  "cbc",
  "der",
- "pbkdf2",
+ "pbkdf2 0.13.0",
  "rand_core",
  "scrypt",
  "sha2 0.11.0",
@@ -4015,6 +4035,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -4036,7 +4057,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4a459cddafb3fe76b31fd8f1108007566c40301feb64dc7b54656eb7388172b"
 dependencies = [
  "crypto-bigint",
- "hmac",
+ "hmac 0.13.0",
 ]
 
 [[package]]
@@ -4102,7 +4123,7 @@ dependencies = [
  "getrandom 0.4.3",
  "ghash",
  "hex-literal",
- "hmac",
+ "hmac 0.13.0",
  "inout",
  "internal-russh-num-bigint",
  "keccak",
@@ -4115,7 +4136,7 @@ dependencies = [
  "p384",
  "p521",
  "pageant",
- "pbkdf2",
+ "pbkdf2 0.13.0",
  "pkcs1",
  "pkcs5",
  "pkcs8",
@@ -4299,6 +4320,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
 name = "salsa20"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4390,7 +4417,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d87af57419b594aa23fa95f09f0e06d80d84ba01c26148c43844cad6ff4485f0"
 dependencies = [
  "cfg-if",
- "pbkdf2",
+ "pbkdf2 0.13.0",
  "salsa20",
  "sha2 0.11.0",
 ]
@@ -4577,6 +4604,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "serde_urlencoded"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd"
+dependencies = [
+ "form_urlencoded",
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
@@ -4919,7 +4958,7 @@ dependencies = [
  "ctutils",
  "ed25519-dalek",
  "hex",
- "hmac",
+ "hmac 0.13.0",
  "p256",
  "p384",
  "p521",

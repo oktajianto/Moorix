@@ -1,9 +1,9 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, AeadCore, KeyInit},
     Aes256Gcm, Key, Nonce,
 };
 use pbkdf2::pbkdf2_hmac;
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ pub fn encrypt_data(password: &str, data: &str) -> Result<Vec<u8>, String> {
     let mut key = [0u8; 32];
     pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, 100_000, &mut key);
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "Invalid key length".to_string())?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
     let ciphertext = cipher
@@ -110,7 +110,7 @@ pub fn decrypt_data(password: &str, data: &[u8]) -> Result<String, String> {
     let mut key = [0u8; 32];
     pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, 100_000, &mut key);
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "Invalid key length".to_string())?;
     let nonce = Nonce::from_slice(nonce_bytes);
 
     let plaintext = cipher

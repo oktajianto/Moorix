@@ -541,7 +541,7 @@ pub async fn sftp_compress(
     let dest_escaped = format!("'{}'", dest.replace("'", "'\''"));
     let cmd = format!("cd '{}' && zip -r {} {}", dir.replace("'", "'\''"), dest_escaped, names_escaped.join(" "));
     
-    channel.exec(true, &cmd).await.map_err(|e| e.to_string())?;
+    channel.exec(true, &*cmd).await.map_err(|e| e.to_string())?;
     wait_channel(channel).await
 }
 
@@ -563,7 +563,7 @@ pub async fn sftp_extract(
         format!("cd {} && tar -xzf {}", dir_escaped, path_escaped)
     };
     
-    channel.exec(true, &cmd).await.map_err(|e| e.to_string())?;
+    channel.exec(true, &*cmd).await.map_err(|e| e.to_string())?;
     wait_channel(channel).await
 }
 
@@ -585,11 +585,11 @@ pub async fn sftp_paste(
     
     let cmd = format!("cd '{}' && {} {} {}", src_dir.replace("'", "'\''"), cmd_base, names_escaped.join(" "), dest_escaped);
     
-    channel.exec(true, &cmd).await.map_err(|e| e.to_string())?;
+    channel.exec(true, &*cmd).await.map_err(|e| e.to_string())?;
     wait_channel(channel).await
 }
 
-async fn wait_channel(mut channel: russh::client::Channel<russh::client::Msg>) -> Result<(), String> {
+async fn wait_channel(mut channel: russh::Channel<russh::client::Msg>) -> Result<(), String> {
     let mut exit_status = 0;
     loop {
         if let Some(msg) = channel.wait().await {

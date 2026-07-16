@@ -8,7 +8,7 @@
 //!   will replace this once the mobile plugin is scaffolded.
 
 #[cfg(desktop)]
-mod backend {
+pub(crate) mod backend {
     use keyring::{Entry, Error};
 
     const SERVICE: &str = "moorix";

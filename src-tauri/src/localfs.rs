@@ -81,7 +81,7 @@ pub fn local_remove(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn local_preview(path: String) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let mut file = fs::File::open(&path).map_err(|e| e.to_string())?;
+    let file = fs::File::open(&path).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     file.try_clone()
         .unwrap_or(file)
