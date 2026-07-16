@@ -4,6 +4,7 @@ import {
   PanelsTopLeft,
   ChevronLeft,
   ChevronRight,
+  UserCircle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ProfileMenu } from "./ProfileMenu";
@@ -28,6 +29,7 @@ type Props = {
   onManageProfiles: () => void;
   userProfiles: UserProfile[];
   onLaunchUserProfile: (profile: UserProfile) => void;
+  onOpenAccount: () => void;
 };
 
 /**
@@ -45,6 +47,7 @@ export function TitleBar({
   onManageProfiles,
   userProfiles,
   onLaunchUserProfile,
+  onOpenAccount,
 }: Props) {
   const [profilesOpen, setProfilesOpen] = useState(false);
   const { settings } = useSettings();
@@ -206,6 +209,9 @@ export function TitleBar({
       <div className="flex items-stretch">
         <WindowButton onClick={onOpenSettings} title="Settings">
           <SettingsIcon className="h-[15px] w-[15px]" />
+        </WindowButton>
+        <WindowButton onClick={onOpenAccount} title="Account">
+          <UserCircle className="h-[15px] w-[15px]" />
         </WindowButton>
         <WindowButton onClick={() => appWindow.minimize()} title="Minimize">
           <svg width="10" height="10" viewBox="0 0 10 10">
