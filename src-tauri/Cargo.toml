@@ -1,6 +1,6 @@
 [package]
 name = "moorix"
-version = "0.1.0-pre.3"
+version = "0.1.0-pre.4"
 description = "Moorix — cross-platform terminal & SSH client"
 authors = ["Hammam Oktajianto"]
 license-file = "../LICENSE"
@@ -29,6 +29,7 @@ russh = { version = "0.62", default-features = false, features = ["ring", "flate
 russh-sftp = "2"
 tokio = { version = "1", features = ["macros", "sync", "io-util", "time"] }
 tauri-plugin-store = "2"
+sha2 = "0.10"
 
 # Desktop-only backends. Local PTY (portable-pty) and the OS keychain (keyring)
 # have no mobile implementation — mobile is SSH-only with an in-memory secret

@@ -19,6 +19,7 @@ impl PtySession {
         cols: u16,
         rows: u16,
         shell: Option<String>,
+        cwd: Option<String>,
         on_data: Channel<Vec<u8>>,
     ) -> Result<Self, String> {
         let pty_system = native_pty_system();
@@ -31,9 +32,16 @@ impl PtySession {
             })
             .map_err(|e| e.to_string())?;
 
-        let mut cmd = CommandBuilder::new(shell.unwrap_or_else(default_shell));
-        if let Some(home) = home_dir() {
-            cmd.cwd(home);
+        let shell = shell.filter(|s| !s.trim().is_empty()).unwrap_or_else(default_shell);
+        let mut cmd = CommandBuilder::new(shell);
+        // Use the configured working directory if set & existing, else home.
+        let dir = cwd
+            .filter(|c| !c.trim().is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .or_else(home_dir);
+        if let Some(dir) = dir {
+            cmd.cwd(dir);
         }
 
         let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;

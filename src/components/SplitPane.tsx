@@ -11,6 +11,8 @@ import { keyOf, MIN_PANE, type PaneNode } from "../paneTree";
 type PaneActions = {
   activePaneId: string;
   onFocusPane: (id: string) => void;
+  /** Activate a pane just by hovering it (Window → "Focus follows mouse"). */
+  focusFollowsMouse?: boolean;
   onSplit: (id: string, dir: "row" | "col") => void;
   onClosePane: (id: string) => void;
   /** Update the `sizes` of the split node at `path` (child-index steps). */
@@ -36,6 +38,9 @@ export function Panes({
       <div
         onFocusCapture={() => actions.onFocusPane(node.paneId)}
         onPointerDownCapture={() => actions.onFocusPane(node.paneId)}
+        onMouseEnter={
+          actions.focusFollowsMouse ? () => actions.onFocusPane(node.paneId) : undefined
+        }
         className="group relative flex min-h-0 min-w-0 flex-1 overflow-hidden rounded"
         style={{
           outline: `1px solid ${active ? "var(--m-accent)" : "transparent"}`,

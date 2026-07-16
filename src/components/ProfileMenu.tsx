@@ -8,6 +8,16 @@ import {
   type Profile,
   type UserProfile,
 } from "../profiles";
+import { useSettings } from "../settings";
+
+/** Subtitle + badge for a user profile, per transport type. */
+function userMeta(up: UserProfile): { subtitle: string; badge: string } {
+  if (up.type === "serial")
+    return { subtitle: up.serial?.path ? `${up.serial.path} · ${up.serial.baud}` : "Serial", badge: "Serial" };
+  if (up.type === "telnet")
+    return { subtitle: up.telnet?.host ? `${up.telnet.host}:${up.telnet.port}` : "Telnet", badge: "Telnet" };
+  return { subtitle: `${up.ssh.username}@${up.ssh.host}`, badge: "SSH" };
+}
 
 type Props = {
   onClose: () => void;
@@ -37,37 +47,59 @@ export function ProfileMenu({
   userProfiles,
   onLaunchUserProfile,
 }: Props) {
+  const { settings } = useSettings();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
 
-  const entries = useMemo<Entry[]>(() => {
-    const users: Entry[] = userProfiles.map((up) => ({
-      id: up.id,
-      name: up.name || `${up.ssh.username}@${up.ssh.host}`,
-      subtitle: `${up.ssh.username}@${up.ssh.host}`,
-      Icon: iconByName(up.iconName),
-      color: up.color,
-      badge: "SSH",
-      run: () => onLaunchUserProfile(up),
-    }));
-    const builtins: Entry[] = AVAILABLE_BUILTINS.map((p) => ({
-      id: p.id,
-      name: p.name,
-      subtitle: subtitleOf(p),
-      Icon: p.Icon,
-      color: p.color,
-      badge: badgeOf(p),
-      run: () => onLaunchProfile(p),
-    }));
-    const all = [...users, ...builtins];
-    const q = query.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter(
-      (e) =>
-        e.name.toLowerCase().includes(q) ||
-        e.subtitle.toLowerCase().includes(q),
-    );
-  }, [query, userProfiles, onLaunchProfile, onLaunchUserProfile]);
+  // The full pool of launchable entries (user profiles + optionally built-ins).
+  const pool = useMemo<Entry[]>(() => {
+    const users: Entry[] = userProfiles.map((up) => {
+      const { subtitle, badge } = userMeta(up);
+      return {
+        id: up.id,
+        name: up.name || subtitle,
+        subtitle,
+        Icon: iconByName(up.iconName),
+        color: up.color,
+        badge,
+        run: () => onLaunchUserProfile(up),
+      };
+    });
+    const builtins: Entry[] = settings.showBuiltinProfiles
+      ? AVAILABLE_BUILTINS.map((p) => ({
+          id: p.id,
+          name: p.name,
+          subtitle: subtitleOf(p),
+          Icon: p.Icon,
+          color: p.color,
+          badge: badgeOf(p),
+          run: () => onLaunchProfile(p),
+        }))
+      : [];
+    return [...users, ...builtins];
+  }, [userProfiles, settings.showBuiltinProfiles, onLaunchProfile, onLaunchUserProfile]);
+
+  const q = query.trim().toLowerCase();
+
+  // "Recent" section (only when not searching): resolve recent ids to entries.
+  const recents = useMemo<Entry[]>(() => {
+    if (q || settings.recentProfilesCount <= 0) return [];
+    const byId = new Map(pool.map((e) => [e.id, e]));
+    return settings.recentProfiles
+      .map((id) => byId.get(id))
+      .filter((e): e is Entry => !!e)
+      .slice(0, settings.recentProfilesCount);
+  }, [q, pool, settings.recentProfiles, settings.recentProfilesCount]);
+
+  const filtered = q
+    ? pool.filter(
+        (e) => e.name.toLowerCase().includes(q) || e.subtitle.toLowerCase().includes(q),
+      )
+    : pool;
+
+  // Flat list for keyboard nav: recents first (may repeat below), then the pool.
+  const entries = [...recents, ...filtered];
+  const recentCount = recents.length;
 
   const total = entries.length + 1;
   const manageIndex = entries.length;
@@ -113,9 +145,23 @@ export function ProfileMenu({
         <div className="max-h-80 overflow-y-auto py-1">
           {entries.map((e, i) => {
             const active = selected === i;
+            const header =
+              recentCount > 0 && i === 0
+                ? "Recent"
+                : recentCount > 0 && i === recentCount
+                  ? "All profiles"
+                  : null;
             return (
+              <div key={`${i}-${e.id}`}>
+                {header && (
+                  <div
+                    className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--m-muted)" }}
+                  >
+                    {header}
+                  </div>
+                )}
               <button
-                key={e.id}
                 onClick={() => run(i)}
                 onMouseEnter={() => setSelected(i)}
                 className="flex w-full items-center gap-3 px-4 py-2 text-left"
@@ -146,6 +192,7 @@ export function ProfileMenu({
                   </span>
                 )}
               </button>
+              </div>
             );
           })}
 

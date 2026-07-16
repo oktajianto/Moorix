@@ -6,9 +6,24 @@
 use std::sync::Arc;
 
 use russh::client::{Handle, Handler};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{copy_bidirectional, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+
+/// Notify the frontend that a forward listener failed to bind its local port,
+/// so it can surface a toast instead of the error only reaching the log.
+fn emit_bind_error(app: &AppHandle, kind: &str, bind_host: &str, bind_port: u16, err: &str) {
+    eprintln!("[moorix] {kind} forward bind {bind_host}:{bind_port} failed: {err}");
+    let _ = app.emit(
+        "forward-error",
+        serde_json::json!({
+            "kind": kind,
+            "bind": format!("{bind_host}:{bind_port}"),
+            "message": err,
+        }),
+    );
+}
 
 /// The SSH connection handle, shared between the shell task and every forward.
 /// `Handle` isn't `Sync` (it owns a receiver), so it lives behind a mutex; the
@@ -18,6 +33,7 @@ pub type SharedHandle<H> = Arc<Mutex<Handle<H>>>;
 /// Local forward (-L): listen on `bind_host:bind_port` and tunnel each incoming
 /// connection to `dest_host:dest_port` as seen from the SSH server.
 pub async fn run_local<H: Handler + Send + 'static>(
+    app: AppHandle,
     handle: SharedHandle<H>,
     bind_host: String,
     bind_port: u16,
@@ -27,7 +43,7 @@ pub async fn run_local<H: Handler + Send + 'static>(
     let listener = match TcpListener::bind((bind_host.as_str(), bind_port)).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[moorix] local forward bind {bind_host}:{bind_port} failed: {e}");
+            emit_bind_error(&app, "local", &bind_host, bind_port, &e.to_string());
             return;
         }
     };
@@ -61,6 +77,7 @@ pub async fn run_local<H: Handler + Send + 'static>(
 /// Dynamic forward (-D): a SOCKS5 proxy on `bind_host:bind_port`. Each SOCKS
 /// CONNECT is tunnelled through a `direct-tcpip` channel to its destination.
 pub async fn run_dynamic<H: Handler + Send + 'static>(
+    app: AppHandle,
     handle: SharedHandle<H>,
     bind_host: String,
     bind_port: u16,
@@ -68,7 +85,7 @@ pub async fn run_dynamic<H: Handler + Send + 'static>(
     let listener = match TcpListener::bind((bind_host.as_str(), bind_port)).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[moorix] dynamic forward bind {bind_host}:{bind_port} failed: {e}");
+            emit_bind_error(&app, "dynamic", &bind_host, bind_port, &e.to_string());
             return;
         }
     };

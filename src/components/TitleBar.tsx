@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ProfileMenu } from "./ProfileMenu";
+import { useSettings } from "../settings";
 import type { Profile, UserProfile } from "../profiles";
 
 const appWindow = getCurrentWindow();
@@ -46,6 +47,7 @@ export function TitleBar({
   onLaunchUserProfile,
 }: Props) {
   const [profilesOpen, setProfilesOpen] = useState(false);
+  const { settings } = useSettings();
 
   // Tab strip paging (Google Sheets style): no scrollbar; when the tabs
   // overflow the available width, prev/next arrows page through them.
@@ -138,18 +140,22 @@ export function TitleBar({
                 color: active ? "var(--m-text)" : "var(--m-muted)",
               }}
             >
-              <span className="text-[10px] opacity-60">{i + 1}</span>
+              {!settings.hideTabIndex && (
+                <span className="text-[10px] opacity-60">{i + 1}</span>
+              )}
               <span className="flex-1 truncate">{tab.label}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(tab.id);
-                }}
-                className="rounded p-0.5 opacity-0 transition hover:bg-black/20 group-hover:opacity-100"
-                title="Close tab"
-              >
-                <CloseIcon />
-              </button>
+              {!settings.hideTabCloseButton && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClose(tab.id);
+                  }}
+                  className="rounded p-0.5 opacity-0 transition hover:bg-black/20 group-hover:opacity-100"
+                  title="Close tab"
+                >
+                  <CloseIcon />
+                </button>
+              )}
             </div>
           );
         })}

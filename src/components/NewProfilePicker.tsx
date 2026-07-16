@@ -13,11 +13,24 @@ type Row =
   | { kind: "template"; id: string; name: string; badge: string; Icon: typeof Network }
   | { kind: "duplicate"; profile: UserProfile };
 
+/** Subtitle for a duplicate-source profile, per transport type. */
+function profileSubtitle(p: UserProfile): string {
+  if (p.type === "serial") return p.serial?.path ? `${p.serial.path} · ${p.serial.baud}` : "Serial";
+  if (p.type === "telnet") return p.telnet?.host ? `${p.telnet.host}:${p.telnet.port}` : "Telnet";
+  return p.ssh?.host ? `${p.ssh.username}@${p.ssh.host}:${p.ssh.port}` : "SSH";
+}
+
+const ENABLED_TEMPLATES = [
+  { id: "ssh" as const, name: "SSH connection", badge: "SSH", Icon: MonitorSmartphone },
+  { id: "serial" as const, name: "Serial connection", badge: "Serial", Icon: Cpu },
+  { id: "telnet" as const, name: "Telnet session", badge: "Telnet", Icon: Network },
+];
+
 /**
- * "New profile" — pick a base profile template, or duplicate an existing
- * profile. Focus: SSH. Serial/Telnet/Raw socket need backend support (coming
- * later) and are shown disabled. Keyboard: ↑/↓ to move, Enter to pick, Esc to
- * close.
+ * "New profile" — pick a base profile template (SSH / Serial / Telnet), or
+ * duplicate an existing profile. Raw socket needs a dedicated backend transport
+ * (not built yet) so it's shown disabled. Keyboard: ↑/↓ to move, Enter to pick,
+ * Esc to close.
  */
 export function NewProfilePicker({ onClose, onNewSsh, userProfiles, onDuplicate }: Props) {
   const disabledTemplates = [
@@ -27,9 +40,9 @@ export function NewProfilePicker({ onClose, onNewSsh, userProfiles, onDuplicate 
   // Only enabled rows are keyboard-navigable.
   const rows = useMemo<Row[]>(
     () => [
-      { kind: "template", id: "ssh", name: "SSH connection", badge: "SSH", Icon: MonitorSmartphone },
-      { kind: "template", id: "serial", name: "Serial connection", badge: "Serial", Icon: Cpu },
-      { kind: "template", id: "telnet", name: "Telnet session", badge: "Telnet", Icon: Network },
+      ...ENABLED_TEMPLATES.map(
+        (t) => ({ kind: "template", id: t.id, name: t.name, badge: t.badge, Icon: t.Icon }) as Row,
+      ),
       ...userProfiles.map((profile) => ({ kind: "duplicate", profile }) as Row),
     ],
     [userProfiles],
@@ -90,23 +103,24 @@ export function NewProfilePicker({ onClose, onNewSsh, userProfiles, onDuplicate 
           <div className="px-4 py-1.5 text-xs font-semibold" style={{ color: "var(--m-muted)" }}>
             Template
           </div>
-          {(() => {
-            const i = rowIndex((r) => r.kind === "template" && r.id === "ssh");
+          {ENABLED_TEMPLATES.map((t) => {
+            const i = rowIndex((r) => r.kind === "template" && r.id === t.id);
             const isActive = active === i;
             return (
               <RowButton
+                key={t.id}
                 ref={isActive ? activeRef : null}
                 isActive={isActive}
                 onActivate={() => setActive(i)}
                 onClick={() => pick(rows[i])}
               >
-                <MonitorSmartphone className="h-4 w-4 shrink-0" />
-                <span className="text-sm font-medium">SSH connection</span>
-                <Badge>SSH</Badge>
+                <t.Icon className="h-4 w-4 shrink-0" />
+                <span className="text-sm font-medium">{t.name}</span>
+                <Badge>{t.badge}</Badge>
                 {isActive && <EnterHint />}
               </RowButton>
             );
-          })()}
+          })}
           {disabledTemplates.map((t) => (
             <div
               key={t.id}
@@ -138,9 +152,7 @@ export function NewProfilePicker({ onClose, onNewSsh, userProfiles, onDuplicate 
               const i = rowIndex((r) => r.kind === "duplicate" && r.profile.id === profile.id);
               const isActive = active === i;
               const Icon = iconByName(profile.iconName);
-              const subtitle = profile.ssh.host
-                ? `${profile.ssh.username}@${profile.ssh.host}:${profile.ssh.port}`
-                : "SSH";
+              const subtitle = profileSubtitle(profile);
               return (
                 <RowButton
                   key={profile.id}

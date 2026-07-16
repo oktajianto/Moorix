@@ -62,12 +62,14 @@ pub fn run() {
             sftp::sftp_rename,
             sftp::sftp_remove,
             sftp::sftp_preview,
+            sftp::sftp_checksum,
             localfs::local_home,
             localfs::local_list,
             localfs::local_mkdir,
             localfs::local_rename,
             localfs::local_remove,
             localfs::local_preview,
+            localfs::local_checksum,
             open_devtools,
         ])
         .run(tauri::generate_context!())

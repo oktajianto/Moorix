@@ -90,3 +90,25 @@ pub fn local_preview(path: String) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())?;
     Ok(buf)
 }
+
+/// SHA-256 (hex) of a local file, streamed so large files don't buffer.
+#[tauri::command]
+pub fn local_checksum(path: String) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = fs::File::open(&path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let mut s = String::with_capacity(64);
+    for b in hasher.finalize() {
+        s.push_str(&format!("{b:02x}"));
+    }
+    Ok(s)
+}

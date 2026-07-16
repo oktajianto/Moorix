@@ -248,10 +248,10 @@ Moorix/
 
 ### v0.2+
 - [x] Split pane
-- [ ] Profile/connection manager (simpan host, port, user, key)
-- [ ] Secure credential store (stronghold)
-- [ ] Banyak tema + import tema (format iTerm2)
-- [ ] Keybinding kustom
+- [x] Profile/connection manager (simpan host, port, user, key) — SSH/Serial/Telnet
+- [x] Secure credential store — OS keychain **+ master-password Vault** (Web Crypto AES-GCM, lintas platform; alternatif stronghold ditolak)
+- [x] Banyak tema + import tema (format iTerm2) — 17 skema iTerm2 diimport (`iterm2Themes.ts`)
+- [x] Keybinding kustom
 - [x] Serial & Telnet (Serial desktop-only; Telnet cross-platform) — via Launcher quick-connect
 
 ### Lanjutan (v1.0+)
@@ -431,7 +431,7 @@ Setelah plan ini disetujui:
 - ✅ Frontend build lolos
 - ✅ Verifikasi manual (Welcome, ganti tema live, settings)
 
-**Catatan:** persist masih localStorage (MVP). Nanti pindah ke `tauri-plugin-store` agar konsisten lintas platform & lebih tahan.
+**Catatan:** ~~persist masih localStorage (MVP)~~ → ✅ dipindah ke `tauri-plugin-store` (Fase 13); localStorage tetap sebagai cache instan.
 
 ### Fase 5 — Profiles & Settings page ✅ (iterasi berjalan)
 - ✅ Chrome light/dark app-wide via CSS variables (`--m-*`), toggle class `.light` dari luminance tema
@@ -525,7 +525,7 @@ Setelah plan ini disetujui:
 
 **Catatan Fase 9:**
 - **Remote (-R) belum** — butuh `ClientHandler` menerima channel `forwarded-tcpip` (+ global request `tcpip-forward`). Iterasi berikutnya.
-- **End-to-end belum diuji** (butuh SSH server + service target + UI Tauri native). Cara uji manual: profil SSH → tab PORTS → tambah Local forward (mis. `127.0.0.1:8080 → localhost:80`) → connect → buka `localhost:8080`. Dynamic: set browser SOCKS5 ke `127.0.0.1:<bindPort>`.
+- ✅ **End-to-end terverifikasi** (user, 2026-07-16): Local & Dynamic port forwarding jalan di window native ke server nyata.
 - Error bind (port kepakai) saat ini hanya di-log backend (`eprintln`), belum ada toast UI.
 
 ### Fase 10 — Settings → Application + Auto-update silent ✅
@@ -597,12 +597,66 @@ Setelah plan ini disetujui:
 - **Drag-and-drop**: antar-panel (HTML5 draggable + drop target berhighlight) + **drop file dari OS** (`getCurrentWebview().onDragDropEvent` → path lokal, hit-test posisi terhadap rect panel → upload).
 - **Menu klik-kanan** tiap sisi: Rename / Delete / New folder (`window.prompt`/`confirm` untuk MVP).
 
-**Verifikasi Fase 11:** `tsc --noEmit` lolos; `cargo`/`tauri dev` **Finished** & window jalan (API russh-sftp — `create/open/read_dir/create_dir/rename/remove_*/metadata` — cocok). Uji end-to-end transfer butuh server SSH nyata via window native.
+**Verifikasi Fase 11:** `tsc --noEmit` lolos; `cargo`/`tauri dev` **Finished** & window jalan (API russh-sftp — `create/open/read_dir/create_dir/rename/remove_*/metadata` — cocok). ✅ **End-to-end transfer terverifikasi** (user, 2026-07-16) di window native ke server SSH nyata.
 **Polish Fase 11 (lanjutan) ✅:** lebar panel **bisa di-drag** (divider 300–900px, **per-tab** `sftpWidths` di `App.tsx`), **antrean multi-transfer** (`SftpPanel` `queueRef`/`activeRef` — satu per satu, sisanya antre; OS-drop banyak file semua masuk antrean; footer `+N queued`; cancel mengosongkan antrean), **progres per-file** dalam folder rekursif (backend emit `TransferEvent::File{index,count,name}` → footer tampil `nama (i/N)` + bar total), **ikon per-tipe file** (`iconForFile` ext→lucide: image/video/audio/archive/code/text).
-**Polish opsional (belum):** panel lebar tak persist antar-restart, preview file, checksum.
+**Polish opsional:** ✅ panel lebar persist antar-restart, ✅ preview file, ✅ checksum SHA-256 — semua selesai di Fase 13.
 
 ### Settings → Config sync (ala Tabby) ✅ (UI + persist)
 `SettingsPage.tsx` → `ConfigSyncSection`: sub-tab **SYNC** (input **Sync host** + banner info) & **ADVANCED** (toggle **Sync hotkeys** / **Sync window settings** / **Sync Vault**). Setting baru di `settings.tsx`: `syncHost`, `syncHotkeys`, `syncWindow`, `syncVault`. **Catatan:** sinkronisasi nyata butuh **server sync kompatibel** (self-hosted) — Moorix belum menyediakannya; UI + penyimpanan setting sudah siap untuk implementasi backend sync di masa depan.
+
+### Fase 12 — Serial/Telnet saved profiles + Master-password Vault ✅
+
+**Serial/Telnet sebagai saved profile** (data model, editor, & launch sudah ada sejak sebelumnya — sesi ini menuntaskan pemicunya):
+- ✅ `NewProfilePicker` sekarang **merender** template **Serial** & **Telnet** (sebelumnya ada di array keyboard-nav tapi tidak tergambar). Raw socket tetap disabled (butuh transport `raw_open`).
+- ✅ Subtitle baris "Duplicate" per-tipe (`user@host:port` / `path · baud` / `host:port`), bukan asumsi SSH.
+- ✅ Alur lengkap terverifikasi: `createNewProfile(type)` → `ProfileEditor` (tab GENERAL Serial=port+baud, Telnet=host+port; SSH tetap 7 tab) → simpan `userProfiles` → `launchUserProfile` buka `serialOpen`/`telnetOpen`/`sshOpenFromProfile` sesuai tipe.
+
+**Master-password Vault** (frontend, Web Crypto — cross-platform termasuk mobile, tanpa Rust):
+- ✅ `src/vault.ts` — PBKDF2-SHA256 (200k iter) → AES-GCM-256. Blob terenkripsi disimpan di `moorix.json` key `vault` (`{v,salt,verifier,entries}`). `verifier` = token dikenal terenkripsi → verifikasi master password tanpa menyimpannya. Key hidup di memori saat unlocked, dibuang saat lock. API: `createVault`/`unlock`/`lock`/`vaultSet`/`vaultGet`/`vaultDelete`/`changeMaster`/`destroyVault`/`vaultConfigured`/`isUnlocked`.
+- ✅ `src/secrets.ts` — wrapper terpadu `secretGet/Set/Delete`: kalau vault terpasang → lewat vault (minta unlock via handler UI); kalau tidak → OS keychain (`secret_*`) seperti sebelumnya. Semua call-site (`profiles.ts` `sshOpenFromProfile` + jump host, `App.tsx` `saveProfile`/`deleteProfile`) dialihkan ke wrapper.
+- ✅ `VaultUnlockModal` + gate di `App.tsx`: saat secret dibutuhkan tapi vault terkunci, modal minta master password (antre resolver bila banyak pemanggil paralel).
+- ✅ `SettingsPage` → **Vault section**: create (password + konfirmasi), unlock/lock, change master password, remove (danger zone), indikator status locked/unlocked. Toast feedback.
+- ✅ **Verifikasi**: `tsc && vite build` lolos (1831 modul). Runtime unlock/enkripsi belum diuji di window native (butuh app jalan — WDAC memblokir compile Rust dari sini, tapi fitur ini murni frontend jadi build = bukti tipe & bundling).
+
+**Catatan Vault:**
+- Password yang sudah terlanjur di OS keychain **tidak dimigrasi** otomatis saat vault dibuat — user isi ulang di profil. (Migrasi otomatis = follow-up opsional.)
+- Alternatif `tauri-plugin-stronghold` (§18) **tidak dipakai**; Web Crypto dipilih karena lintas platform, tanpa dependensi Rust, dan bisa dibangun/diuji-build tanpa toolchain native.
+- Master password **tidak tersimpan**; hilang = secret tak bisa dipulihkan (by design).
+
+### Fase 13 — Polish: persist settings, port-forward toast, SFTP preview/checksum, iTerm2 themes ✅
+> Diverifikasi live di `pnpm tauri dev` (window native, HMR frontend + recompile Rust 19s tanpa error).
+
+- ✅ **Settings persist → `tauri-plugin-store`** (`settings.tsx`): boot dari localStorage (instant) lalu load dari store (`moorix.json` key `settings`) sebagai source-of-truth; tiap perubahan ditulis balik ke localStorage + store (debounce 300ms). Fallback ke localStorage di luar Tauri.
+- ✅ **Toast error bind port-forward** (`forward.rs` emit event `forward-error` `{kind,bind,message}` saat `TcpListener::bind` gagal → `App.tsx` listener → toast merah). `run_local`/`run_dynamic` terima `AppHandle`; di-thread dari `ssh.rs`.
+- ✅ **SFTP lebar panel persist antar-restart** — width terakhir disimpan ke `settings.sftpWidth` (kini via store) saat drag selesai; jadi default panel berikutnya & sesudah restart.
+- ✅ **SFTP file preview** — sudah ada (`sftp_preview`/`local_preview` 512KB cap, modal text/image via double-click); dikonfirmasi jalan.
+- ✅ **SFTP checksum SHA-256** — backend `sftp_checksum`/`local_checksum` (streaming 64KB, crate `sha2` yang sudah ada transitif via russh → tanpa build-script baru); menu klik-kanan "Checksum (SHA-256)" → modal hash + tombol Copy.
+- ✅ **Import 17 skema iTerm2** (`iterm2Themes.ts`: Nord, Gruvbox Dark, Monokai, Catppuccin Mocha/Latte, Night Owl, Cobalt2, Snazzy, Palenight, Oceanic Next, Ayu Dark/Mirage/Light, GitHub Dark/Light, Solarized Light, Tomorrow Night, Base16 Default Dark) → digabung ke `THEMES`, otomatis muncul di Color scheme global & tab COLORS per-profil.
+- ✅ **Verifikasi user (2026-07-16):** SSH connect live, port forwarding, & SFTP transfer end-to-end jalan di window native.
+
+### Fase 14 — Settings → Window + rapikan sidebar ✅
+- ✅ **Hapus item "SSH"** dari sidebar Settings (redundan dengan Profiles & connections) — `SectionId` & import `Globe` dibersihkan.
+- ✅ **Window section** (`WindowSection`) — hanya kontrol yang benar-benar ke-wire ke perilaku Moorix (row Tabby yang cosmetic/tak relevan sengaja tak disertakan):
+  - **Window**: *Window frame* Custom/Native → `getCurrentWindow().setDecorations()`; *Always on top* → `setAlwaysOnTop()`.
+  - **Tabs**: *Hide tab index*, *Hide tab close button* (dibaca `TitleBar` via `useSettings`), *Close window after closing the last tab* (di `closeTab`).
+  - **Panes**: *Focus follows mouse* → `Panes`/`SplitPane` `onMouseEnter` aktifkan pane.
+  - **Hacks**: *Disable GPU acceleration* → petakan ke `rendererType` (webgl/dom).
+  - Setting baru: `windowFrame`, `alwaysOnTop`, `hideTabIndex`, `hideTabCloseButton`, `closeOnLastTab`, `focusFollowsMouse` (persist via store).
+  - Capability ditambah: `core:window:allow-set-decorations`, `allow-set-always-on-top`.
+  - Verifikasi: `tsc` lolos; `tauri dev` recompile 11.6s tanpa error, app relaunch.
+
+### Fase 15 — Settings → Shell + Profiles ADVANCED ✅
+- ✅ **Shell section** (`ShellSection`) — default untuk local terminal:
+  - **Default shell** (input + datalist shell umum; kosong = OS default) → dipakai Launcher "Local shell".
+  - **Working directory** (kosong = home) → cwd untuk semua local shell.
+  - Backend: `session_open`/`PtySession::spawn` terima `cwd: Option<String>` (validasi `is_dir`, fallback home). Frontend: `localOpen` baca default modul (`setLocalShellDefaults`) yang di-mirror App dari settings → berlaku ke semua local shell tanpa ubah call-site.
+  - Setting baru: `defaultShell`, `shellWorkingDir`.
+- ✅ **Profiles → ADVANCED** (tab kini fungsional, sebelumnya span mati):
+  - **Show recent profiles in selector** (angka 0–20) → palette ProfileMenu tampilkan section "Recent" (dilacak `recentProfiles` di App saat launch, cap 20).
+  - **Show built-in profiles in selector** (toggle) → sembunyikan built-in dari palette.
+  - Setting baru: `showBuiltinProfiles`, `recentProfilesCount`, `recentProfiles`.
+  - **Bonus**: subtitle/badge palette diperbaiki per-tipe (Serial `path·baud`, Telnet `host:port`) — sebelumnya selalu asumsi SSH.
+- ✅ Verifikasi: `tsc` lolos + `cargo check` lolos (12s). ⚠️ **Belum diuji runtime** — Smart App Control (WDAC) memblokir exe hasil build baru saat di-spawn tool saya (`os error 4551`), jadi app perlu dijalankan ulang `pnpm tauri dev` dari terminal user.
 
 ---
 
@@ -615,8 +669,8 @@ Setelah plan ini disetujui:
 ### 17.1 Alur "New profile"
 1. Settings → Profiles → **New ▾ → New profile**
 2. Muncul **palette pemilih template** (gaya quick-launch): judul *"Select a base profile to use as a template"* — ✅ **SUDAH DIBANGUN**
-   - **Template**: Raw socket connection (Telnet), **SSH connection** (✅ aktif), Serial connection, Telnet session (⬜ disabled — Fase 8)
-   - **Duplicate an existing profile**: ✅ daftar profil user tampil & bisa diklon
+   - **Template**: **SSH** ✅, **Serial** ✅, **Telnet** ✅ (semua aktif & bisa disimpan sebagai profil); Raw socket ⬜ disabled (butuh transport `raw_open` khusus)
+   - **Duplicate an existing profile**: ✅ daftar profil user tampil & bisa diklon (subtitle per-tipe ssh/serial/telnet)
    - Keyboard ↑/↓ + Enter (baris teraktif badge `ENTER ↵`) — ✅ done
 3. Pilih template → buka **modal editor profil** sesuai tipe. (Fokus: SSH.)
 

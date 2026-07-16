@@ -31,6 +31,9 @@ import { Launcher } from "./components/Launcher";
 import { SettingsPage, type SectionId } from "./components/SettingsPage";
 import { ProfileEditor } from "./components/ProfileEditor";
 import { Welcome } from "./components/Welcome";
+import { VaultUnlockModal } from "./components/VaultUnlockModal";
+import { secretSet, secretDelete, setVaultUnlockHandler } from "./secrets";
+import { unlock as vaultUnlock } from "./vault";
 import { useSettings, DEFAULT_SETTINGS } from "./settings";
 import { useToast } from "./components/Toast";
 import { checkForUpdates } from "./updater";
@@ -44,6 +47,7 @@ import {
   telnetOpen,
   sshOpenFromProfile,
   termOptionsOf,
+  setLocalShellDefaults,
   type Profile,
   type TabDesc,
   type UserProfile,
@@ -122,6 +126,28 @@ function App() {
     () => !localStorage.getItem(WELCOME_KEY),
   );
 
+  // Vault unlock gate: `secretGet/Set` call the registered handler when a secret
+  // is needed while the vault is locked. Pending callers queue on resolvers and
+  // are settled together when the modal is submitted or cancelled.
+  const [showVaultUnlock, setShowVaultUnlock] = useState(false);
+  const vaultResolvers = useRef<((ok: boolean) => void)[]>([]);
+  useEffect(() => {
+    setVaultUnlockHandler(
+      () =>
+        new Promise<boolean>((resolve) => {
+          vaultResolvers.current.push(resolve);
+          setShowVaultUnlock(true);
+        }),
+    );
+    return () => setVaultUnlockHandler(null);
+  }, []);
+  const settleVaultUnlock = (ok: boolean) => {
+    const rs = vaultResolvers.current;
+    vaultResolvers.current = [];
+    setShowVaultUnlock(false);
+    rs.forEach((r) => r(ok));
+  };
+
   useEffect(() => {
     document.documentElement.classList.toggle(
       "light",
@@ -132,6 +158,31 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("no-animations", !settings.animations);
   }, [settings.animations]);
+
+  // Window → frame: "custom" uses the frameless title bar (decorations off);
+  // "native" hands the frame back to the OS.
+  useEffect(() => {
+    void getCurrentWindow()
+      .setDecorations(settings.windowFrame === "native")
+      .catch(() => {});
+  }, [settings.windowFrame]);
+
+  // Window → always on top.
+  useEffect(() => {
+    void getCurrentWindow().setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
+  }, [settings.alwaysOnTop]);
+
+  // Shell → default shell + working directory applied to every local terminal.
+  useEffect(() => {
+    setLocalShellDefaults({ shell: settings.defaultShell, cwd: settings.shellWorkingDir });
+  }, [settings.defaultShell, settings.shellWorkingDir]);
+
+  // Track recently-launched profiles (most recent first, capped) for the
+  // quick-launch palette's "Recent" section.
+  const recordRecent = (id: string) =>
+    update({
+      recentProfiles: [id, ...settings.recentProfiles.filter((x) => x !== id)].slice(0, 20),
+    });
 
   // Appearance → Custom CSS: inject/update a single global <style> element.
   useEffect(() => {
@@ -163,9 +214,20 @@ function App() {
       "host-key-mismatch",
       (e) => setMismatch(e.payload),
     );
+    const p3 = listen<{ kind: string; bind: string; message: string }>(
+      "forward-error",
+      (e) =>
+        toast.show({
+          variant: "error",
+          title: `Port forward failed (${e.payload.kind})`,
+          message: `${e.payload.bind}: ${e.payload.message}`,
+          duration: 6000,
+        }),
+    );
     return () => {
       void p1.then((un) => un());
       void p2.then((un) => un());
+      void p3.then((un) => un());
     };
   }, []);
 
@@ -254,13 +316,13 @@ function App() {
         : [...userProfiles, stored],
     );
     if (password) {
-      void invoke("secret_set", { id: p.id, password }).catch(() => {});
+      void secretSet(p.id, password).catch(() => {});
     }
   };
 
   const deleteProfile = (id: string) => {
     persistProfiles(userProfiles.filter((x) => x.id !== id));
-    void invoke("secret_delete", { id }).catch(() => {});
+    void secretDelete(id).catch(() => {});
   };
 
   const setDefaultProfile = (id: string) => {
@@ -310,6 +372,7 @@ function App() {
 
   const launchProfile = (p: Profile) => {
     if (p.type === "local" && p.command) {
+      recordRecent(p.id);
       openTerminalTab(localOpen(p.command), p.name, undefined, {
         t: "local",
         command: p.command,
@@ -323,6 +386,7 @@ function App() {
   };
 
   const launchUserProfile = (p: UserProfile) => {
+    recordRecent(p.id);
     let opener;
     let desc: TabDesc;
     if (p.type === "serial" && p.serial) {
@@ -437,17 +501,19 @@ function App() {
   const startSftpResize = (e: React.PointerEvent, tabId: string) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startW = sftpWidths[tabId] ?? 440;
-    const move = (ev: PointerEvent) =>
-      setSftpWidths((m) => ({
-        ...m,
-        [tabId]: Math.max(300, Math.min(900, startW - (ev.clientX - startX))),
-      }));
+    const startW = sftpWidths[tabId] ?? settings.sftpWidth ?? 440;
+    let lastW = startW;
+    const move = (ev: PointerEvent) => {
+      lastW = Math.max(300, Math.min(900, startW - (ev.clientX - startX)));
+      setSftpWidths((m) => ({ ...m, [tabId]: lastW }));
+    };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       document.body.style.removeProperty("cursor");
       document.body.style.removeProperty("user-select");
+      // Remember the last width as the default for future SFTP panels / restarts.
+      update({ sftpWidth: Math.round(lastW) });
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -488,6 +554,11 @@ function App() {
     const idx = tabs.findIndex((t) => t.id === id);
     let next = tabs.filter((t) => t.id !== id);
     if (next.length === 0) {
+      // Window → "Close the window after closing the last tab".
+      if (settings.closeOnLastTab) {
+        void getCurrentWindow().close();
+        return;
+      }
       next = [{ id: nextId(), kind: "launcher" }];
     }
     setTabs(next);
@@ -651,6 +722,7 @@ function App() {
                     onSplit={(paneId, dir) => splitPane(tab.id, paneId, dir)}
                     onClosePane={(paneId) => closePane(tab.id, paneId)}
                     onResize={(path, sizes) => resizePane(tab.id, path, sizes)}
+                    focusFollowsMouse={settings.focusFollowsMouse}
                     isSsh={tab.desc?.t === "ssh"}
                     onOpenSftp={(paneId) => openSftpForPane(tab.id, paneId)}
                   />
@@ -662,7 +734,7 @@ function App() {
                       className="w-1.5 shrink-0 cursor-col-resize"
                       style={{ background: "var(--m-border)" }}
                     />
-                    <div className="shrink-0" style={{ width: sftpWidths[tab.id] ?? 440 }}>
+                    <div className="shrink-0" style={{ width: sftpWidths[tab.id] ?? settings.sftpWidth ?? 440 }}>
                       <SftpPanel
                         sessionId={sftpTabs[tab.id]}
                         onClose={() => closeSftp(tab.id)}
@@ -690,6 +762,17 @@ function App() {
 
       {hostKeyReqs[0] && (
         <HostKeyPrompt req={hostKeyReqs[0]} onDecision={decideHostKey} />
+      )}
+
+      {showVaultUnlock && (
+        <VaultUnlockModal
+          onSubmit={async (master) => {
+            const ok = await vaultUnlock(master);
+            if (ok) settleVaultUnlock(true);
+            return ok;
+          }}
+          onCancel={() => settleVaultUnlock(false)}
+        />
       )}
 
       {mismatch && (

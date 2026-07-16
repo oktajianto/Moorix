@@ -126,6 +126,7 @@ export function SftpPanel({
   } | null>(null);
 
   const [preview, setPreview] = useState<{ path: string; name: string; isLocal: boolean } | null>(null);
+  const [checksum, setChecksum] = useState<{ name: string; hash: string | null; error?: string } | null>(null);
 
   // Open the SFTP session (reuses the SSH connection) and pick starting dirs.
   useEffect(() => {
@@ -302,6 +303,18 @@ export function SftpPanel({
       if (side === "local") setSelLocal(null);
       else setSelRemote(null);
     }).catch(opErr);
+  };
+
+  const doChecksum = (side: "local" | "remote", name: string) => {
+    const path = joinPath(opDir(side), name);
+    setChecksum({ name, hash: null });
+    const p =
+      side === "local"
+        ? invoke<string>("local_checksum", { path })
+        : invoke<string>("sftp_checksum", { sftpId, path });
+    p.then((hash) => setChecksum({ name, hash })).catch((e) =>
+      setChecksum({ name, hash: null, error: e instanceof Error ? e.message : String(e) }),
+    );
   };
 
   // In-app drag-and-drop between the two panes.
@@ -489,6 +502,9 @@ export function SftpPanel({
                 <MenuItem danger onClick={() => { doDelete(menu.side, menu.name!); setMenu(null); }}>
                   Delete
                 </MenuItem>
+                <MenuItem onClick={() => { doChecksum(menu.side, menu.name!); setMenu(null); }}>
+                  Checksum (SHA-256)
+                </MenuItem>
                 <div className="my-1 border-t" style={{ borderColor: "var(--m-border)" }} />
               </>
             )}
@@ -506,6 +522,55 @@ export function SftpPanel({
           onClose={() => setPreview(null)}
         />
       )}
+
+      {checksum && (
+        <ChecksumModal {...checksum} onClose={() => setChecksum(null)} />
+      )}
+    </div>
+  );
+}
+
+function ChecksumModal({
+  name,
+  hash,
+  error,
+  onClose,
+}: {
+  name: string;
+  hash: string | null;
+  error?: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg rounded-lg border shadow-2xl" style={{ background: "var(--m-panel)", borderColor: "var(--m-border)" }}>
+        <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--m-border)" }}>
+          <h2 className="truncate text-sm font-semibold" title={name}>SHA-256: {name}</h2>
+          <button onClick={onClose} className="rounded p-1 hover:bg-black/10"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 text-sm">
+          {error ? (
+            <div className="text-red-500">{error}</div>
+          ) : hash === null ? (
+            <div className="flex items-center gap-2" style={{ color: "var(--m-muted)" }}>
+              <Loader2 className="h-4 w-4 animate-spin" /> Hashing…
+            </div>
+          ) : (
+            <>
+              <code className="block break-all rounded-md border px-3 py-2 font-mono text-xs" style={{ background: "var(--m-input)", borderColor: "var(--m-input-border)" }}>
+                {hash}
+              </code>
+              <button
+                onClick={() => { void navigator.clipboard.writeText(hash).then(() => setCopied(true)).catch(() => {}); }}
+                className="mt-3 rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+              >
+                {copied ? "Copied!" : "Copy"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

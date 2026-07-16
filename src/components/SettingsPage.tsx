@@ -8,7 +8,6 @@ import {
   Cloud,
   Keyboard,
   SquareChevronRight,
-  Globe,
   Lock,
   AppWindow,
   FileCode2,
@@ -57,6 +56,15 @@ import {
   type UserProfile,
 } from "../profiles";
 import { NewProfilePicker } from "./NewProfilePicker";
+import {
+  vaultConfigured,
+  isUnlocked,
+  createVault,
+  unlock as vaultUnlock,
+  lock as vaultLock,
+  changeMaster,
+  destroyVault,
+} from "../vault";
 
 type Props = {
   onLaunchProfile: (profile: Profile) => void;
@@ -77,7 +85,7 @@ type Props = {
 
 export type SectionId =
   | "application" | "appearance" | "profiles" | "terminal" | "colorscheme"
-  | "configsync" | "hotkeys" | "shell" | "ssh" | "vault" | "window" | "configfile";
+  | "configsync" | "hotkeys" | "shell" | "vault" | "window" | "configfile";
 
 const SIDEBAR: { id: SectionId; name: string; Icon: LucideIcon; gapAfter?: boolean }[] = [
   { id: "application", name: "Application", Icon: LayoutGrid },
@@ -88,7 +96,6 @@ const SIDEBAR: { id: SectionId; name: string; Icon: LucideIcon; gapAfter?: boole
   { id: "configsync", name: "Config sync", Icon: Cloud },
   { id: "hotkeys", name: "Hotkeys", Icon: Keyboard },
   { id: "shell", name: "Shell", Icon: SquareChevronRight },
-  { id: "ssh", name: "SSH", Icon: Globe },
   { id: "vault", name: "Vault", Icon: Lock },
   { id: "window", name: "Window", Icon: AppWindow },
   { id: "configfile", name: "Config file", Icon: FileCode2 },
@@ -145,6 +152,12 @@ export function SettingsPage(props: Props) {
           <ColorSchemeSection />
         ) : section === "terminal" ? (
           <TerminalSection />
+        ) : section === "vault" ? (
+          <VaultSection />
+        ) : section === "window" ? (
+          <WindowSection />
+        ) : section === "shell" ? (
+          <ShellSection />
         ) : (
           <Placeholder title={SIDEBAR.find((s) => s.id === section)?.name ?? ""} />
         )}
@@ -167,6 +180,7 @@ function ProfilesSection({
   onDuplicateProfile,
   onDeleteProfile,
 }: Props) {
+  const [tab, setTab] = useState<"profiles" | "advanced">("profiles");
   const [filter, setFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [newMenuOpen, setNewMenuOpen] = useState(false);
@@ -219,10 +233,25 @@ function ProfilesSection({
     <div className="max-w-3xl">
       <h1 className="text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Profiles</h1>
       <div className="mt-3 mb-6 flex gap-6 border-b text-sm" style={{ borderColor: "var(--m-border)" }}>
-        <span className="border-b-2 border-cyan-500 pb-2 font-medium" style={{ color: "var(--m-text)" }}>PROFILES</span>
-        <span className="pb-2" style={{ color: "var(--m-muted)" }}>ADVANCED</span>
+        {(["profiles", "advanced"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="pb-2 font-medium uppercase"
+            style={{
+              color: tab === t ? "var(--m-text)" : "var(--m-muted)",
+              borderBottom: tab === t ? "2px solid #06b6d4" : "2px solid transparent",
+            }}
+          >
+            {t}
+          </button>
+        ))}
       </div>
 
+      {tab === "advanced" ? (
+        <ProfilesAdvancedTab />
+      ) : (
+       <>
       {/* Default profile */}
       <div className="mb-5 flex items-center justify-between">
         <label className="text-sm" style={{ color: "var(--m-text)" }}>Default profile for new tabs</label>
@@ -322,6 +351,8 @@ function ProfilesSection({
             })}
         </div>
       </div>
+      </>
+      )}
 
       {/* New group prompt */}
       {groupPromptOpen && (
@@ -1390,6 +1421,294 @@ function ColorSchemeSection() {
   );
 }
 
+
+/** Vault — master-password credential store. Setup / unlock / lock / change /
+ *  remove. When a vault exists, profile passwords are encrypted with the master
+ *  password instead of the OS keychain (and it works on mobile too). */
+function VaultSection() {
+  const toast = useToast();
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [, forceTick] = useState(0);
+  const refresh = () => forceTick((n) => n + 1);
+
+  useEffect(() => {
+    vaultConfigured().then(setConfigured);
+  }, []);
+
+  // Create
+  const [newPw, setNewPw] = useState("");
+  const [newPw2, setNewPw2] = useState("");
+  // Unlock
+  const [unlockPw, setUnlockPw] = useState("");
+  // Change
+  const [oldPw, setOldPw] = useState("");
+  const [chgPw, setChgPw] = useState("");
+  const [chgPw2, setChgPw2] = useState("");
+
+  const inputStyle = {
+    background: "var(--m-input)",
+    borderColor: "var(--m-input-border)",
+    color: "var(--m-text)",
+  };
+  const inputCls = "w-72 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500";
+
+  const doCreate = async () => {
+    if (newPw.length < 4) return toast.show({ variant: "error", title: "Choose a longer master password.", duration: 3000 });
+    if (newPw !== newPw2) return toast.show({ variant: "error", title: "Passwords don't match.", duration: 3000 });
+    await createVault(newPw);
+    setNewPw(""); setNewPw2("");
+    setConfigured(true);
+    toast.show({ variant: "success", title: "Vault created & unlocked.", duration: 3000 });
+    refresh();
+  };
+
+  const doUnlock = async () => {
+    const ok = await vaultUnlock(unlockPw);
+    setUnlockPw("");
+    toast.show(ok ? { variant: "success", title: "Vault unlocked.", duration: 3000 } : { variant: "error", title: "Wrong master password.", duration: 3000 });
+    refresh();
+  };
+
+  const doChange = async () => {
+    if (chgPw.length < 4) return toast.show({ variant: "error", title: "Choose a longer master password.", duration: 3000 });
+    if (chgPw !== chgPw2) return toast.show({ variant: "error", title: "New passwords don't match.", duration: 3000 });
+    const ok = await changeMaster(oldPw, chgPw);
+    setOldPw(""); setChgPw(""); setChgPw2("");
+    toast.show(ok ? { variant: "success", title: "Master password changed.", duration: 3000 } : { variant: "error", title: "Current password is wrong.", duration: 3000 });
+    refresh();
+  };
+
+  const doRemove = async () => {
+    if (!window.confirm("Remove the vault? All secrets stored in it will be permanently lost.")) return;
+    await destroyVault();
+    setConfigured(false);
+    toast.show({ variant: "success", title: "Vault removed.", duration: 3000 });
+    refresh();
+  };
+
+  const unlocked = isUnlocked();
+
+  return (
+    <div className="max-w-2xl">
+      <h1 className="text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Vault</h1>
+      <p className="mt-2 mb-6 text-sm" style={{ color: "var(--m-muted)" }}>
+        Encrypt saved credentials with a master password (AES-GCM, PBKDF2). Unlike the OS
+        keychain, the vault works on every platform — including mobile. The master password
+        is never stored; if you lose it, the secrets can't be recovered.
+      </p>
+
+      {configured === null ? (
+        <p className="text-sm" style={{ color: "var(--m-muted)" }}>Loading…</p>
+      ) : !configured ? (
+        <>
+          <SectionTitle first>Create a vault</SectionTitle>
+          <div className="flex flex-col gap-2">
+            <input type="password" className={inputCls} style={inputStyle} placeholder="Master password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+            <input type="password" className={inputCls} style={inputStyle} placeholder="Confirm master password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void doCreate()} />
+            <button onClick={() => void doCreate()} className="w-40 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">
+              Create vault
+            </button>
+          </div>
+          <p className="mt-3 text-xs" style={{ color: "var(--m-muted)" }}>
+            Note: existing passwords already in the OS keychain aren't migrated — re-enter them
+            in each profile after creating the vault.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="mb-6 flex items-center gap-2 text-sm">
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ background: unlocked ? "#22c55e" : "#f59e0b" }}
+            />
+            <span style={{ color: "var(--m-text)" }}>
+              Vault is {unlocked ? "unlocked" : "locked"}.
+            </span>
+            {unlocked && (
+              <button onClick={() => { vaultLock(); refresh(); }} className="ml-2 rounded-md border px-3 py-1 text-xs" style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}>
+                Lock now
+              </button>
+            )}
+          </div>
+
+          {!unlocked && (
+            <>
+              <SectionTitle first>Unlock</SectionTitle>
+              <div className="flex items-center gap-2">
+                <input type="password" className={inputCls} style={inputStyle} placeholder="Master password" value={unlockPw} onChange={(e) => setUnlockPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void doUnlock()} />
+                <button onClick={() => void doUnlock()} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">Unlock</button>
+              </div>
+            </>
+          )}
+
+          {unlocked && (
+            <>
+              <SectionTitle first>Change master password</SectionTitle>
+              <div className="flex flex-col gap-2">
+                <input type="password" className={inputCls} style={inputStyle} placeholder="Current password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
+                <input type="password" className={inputCls} style={inputStyle} placeholder="New password" value={chgPw} onChange={(e) => setChgPw(e.target.value)} />
+                <input type="password" className={inputCls} style={inputStyle} placeholder="Confirm new password" value={chgPw2} onChange={(e) => setChgPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void doChange()} />
+                <button onClick={() => void doChange()} className="w-48 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">Change password</button>
+              </div>
+            </>
+          )}
+
+          <SectionTitle>Danger zone</SectionTitle>
+          <button onClick={() => void doRemove()} className="rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-400">
+            Remove vault
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Window — frame, tab-strip chrome, pane focus, and rendering hacks. Only the
+ *  controls that map to real Moorix behaviour are exposed (the Tabby reference
+ *  has extra cosmetic rows that don't apply here). */
+function WindowSection() {
+  const { settings, update } = useSettings();
+  const disableGpu = settings.rendererType === "dom";
+  return (
+    <div className="max-w-3xl">
+      <h1 className="text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Window</h1>
+
+      <SectionTitle first>Window</SectionTitle>
+      <FieldRow label="Window frame" sublabel="Custom uses Moorix's title bar; Native hands the frame to the OS">
+        <Segmented
+          value={settings.windowFrame}
+          onChange={(v) => update({ windowFrame: v })}
+          options={[
+            { value: "custom", label: "Custom" },
+            { value: "native", label: "Native" },
+          ]}
+        />
+      </FieldRow>
+      <ToggleRow
+        title="Always on top"
+        subtitle="Keep the window above other windows"
+        checked={settings.alwaysOnTop}
+        onChange={(v) => update({ alwaysOnTop: v })}
+      />
+
+      <SectionTitle>Tabs</SectionTitle>
+      <ToggleRow title="Hide tab index" checked={settings.hideTabIndex} onChange={(v) => update({ hideTabIndex: v })} />
+      <ToggleRow title="Hide tab close button" checked={settings.hideTabCloseButton} onChange={(v) => update({ hideTabCloseButton: v })} />
+      <ToggleRow
+        title="Close the window after closing the last tab"
+        checked={settings.closeOnLastTab}
+        onChange={(v) => update({ closeOnLastTab: v })}
+      />
+
+      <SectionTitle>Panes</SectionTitle>
+      <ToggleRow
+        title="Focus follows mouse"
+        subtitle="Moving the mouse over an inactive pane activates it"
+        checked={settings.focusFollowsMouse}
+        onChange={(v) => update({ focusFollowsMouse: v })}
+      />
+
+      <SectionTitle>Hacks</SectionTitle>
+      <ToggleRow
+        title="Disable GPU acceleration"
+        subtitle="Use the DOM renderer instead of WebGL — tick if you see aliasing or ghosting (applies to newly opened terminals)"
+        checked={disableGpu}
+        onChange={(v) => update({ rendererType: v ? "dom" : "webgl" })}
+      />
+    </div>
+  );
+}
+
+/** Profiles → ADVANCED sub-tab. Only the options that map to real Moorix
+ *  behaviour (quick-launch palette) are exposed. */
+function ProfilesAdvancedTab() {
+  const { settings, update } = useSettings();
+  const inputStyle = {
+    background: "var(--m-input)",
+    borderColor: "var(--m-input-border)",
+    color: "var(--m-text)",
+  };
+  return (
+    <div>
+      <FieldRow
+        label="Show recent profiles in selector"
+        sublabel="Number of recently-used profiles shown at the top of the palette. 0 disables it."
+      >
+        <input
+          type="number"
+          min={0}
+          max={20}
+          value={settings.recentProfilesCount}
+          onChange={(e) =>
+            update({ recentProfilesCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })
+          }
+          className="w-24 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+          style={inputStyle}
+        />
+      </FieldRow>
+      <ToggleRow
+        title="Show built-in profiles in selector"
+        subtitle="If disabled, only your custom profiles appear in the quick-launch palette"
+        checked={settings.showBuiltinProfiles}
+        onChange={(v) => update({ showBuiltinProfiles: v })}
+      />
+    </div>
+  );
+}
+
+/** Shell — defaults for local terminals (desktop). Applies to every local
+ *  shell tab; SSH/Serial/Telnet are configured per-profile. */
+function ShellSection() {
+  const { settings, update } = useSettings();
+  const inputStyle = {
+    background: "var(--m-input)",
+    borderColor: "var(--m-input-border)",
+    color: "var(--m-text)",
+  };
+  const KNOWN_SHELLS = [
+    "powershell.exe",
+    "pwsh.exe",
+    "cmd.exe",
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "wsl.exe",
+    "/bin/bash",
+    "/bin/zsh",
+  ];
+  return (
+    <div className="max-w-3xl">
+      <h1 className="text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Shell</h1>
+      <p className="mt-2 mb-4 text-sm" style={{ color: "var(--m-muted)" }}>
+        Defaults for local terminal sessions. SSH, Serial, and Telnet are configured per profile.
+      </p>
+
+      <FieldRow label="Default shell" sublabel="Used for the Launcher's Local shell. Empty = OS default.">
+        <input
+          list="moorix-shells"
+          value={settings.defaultShell}
+          onChange={(e) => update({ defaultShell: e.target.value })}
+          placeholder="System default"
+          className="w-72 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+          style={inputStyle}
+        />
+        <datalist id="moorix-shells">
+          {KNOWN_SHELLS.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      </FieldRow>
+
+      <FieldRow label="Working directory" sublabel="Starting directory for new local shells. Empty = home.">
+        <input
+          value={settings.shellWorkingDir}
+          onChange={(e) => update({ shellWorkingDir: e.target.value })}
+          placeholder="~ (home)"
+          className="w-72 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+          style={inputStyle}
+        />
+      </FieldRow>
+    </div>
+  );
+}
 
 function Placeholder({ title }: { title: string }) {
   return (

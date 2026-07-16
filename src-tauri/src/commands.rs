@@ -15,17 +15,18 @@ pub fn session_open(
     cols: u16,
     rows: u16,
     shell: Option<String>,
+    cwd: Option<String>,
 ) -> Result<String, String> {
     #[cfg(desktop)]
     {
-        let session = crate::pty::PtySession::spawn(cols, rows, shell, on_data)?;
+        let session = crate::pty::PtySession::spawn(cols, rows, shell, cwd, on_data)?;
         let id = state.next_id();
         state.insert(id.clone(), Session::Pty(session));
         Ok(id)
     }
     #[cfg(mobile)]
     {
-        let _ = (state, on_data, cols, rows, shell);
+        let _ = (state, on_data, cols, rows, shell, cwd);
         Err("local shell is not available on mobile".into())
     }
 }

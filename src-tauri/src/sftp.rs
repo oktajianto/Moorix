@@ -206,6 +206,38 @@ pub async fn sftp_preview(
     Ok(buf)
 }
 
+/// SHA-256 (hex) of a remote file, streamed so large files don't buffer.
+#[tauri::command]
+pub async fn sftp_checksum(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let sftp = state
+        .sftp(&sftp_id)
+        .ok_or_else(|| "sftp session not found".to_string())?;
+    let mut file = sftp.open(path).await.map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex_digest(hasher.finalize().as_slice()))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 /* ------------------------------------------------------------------------- */
 /* Transfers (upload / download), recursive, with progress + cancellation.   */
 /* ------------------------------------------------------------------------- */

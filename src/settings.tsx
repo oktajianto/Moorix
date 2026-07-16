@@ -2,14 +2,17 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { DEFAULT_THEME } from "./themes";
+import { getStore, setValue } from "./store";
 
 export type CursorShape = "block" | "bar" | "underline";
 export type RendererType = "webgl" | "dom";
 export type BellMode = "off" | "visual" | "audible";
+export type WindowFrame = "custom" | "native";
 
 export type Settings = {
   fontSize: number;
@@ -62,6 +65,20 @@ export type Settings = {
   syncVault: boolean;
   // SFTP
   sftpWidth: number;
+  // Window
+  windowFrame: WindowFrame;
+  alwaysOnTop: boolean;
+  hideTabIndex: boolean;
+  hideTabCloseButton: boolean;
+  closeOnLastTab: boolean;
+  focusFollowsMouse: boolean;
+  // Shell (local terminals)
+  defaultShell: string;
+  shellWorkingDir: string;
+  // Profiles → Advanced
+  showBuiltinProfiles: boolean;
+  recentProfilesCount: number;
+  recentProfiles: string[];
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -105,6 +122,17 @@ export const DEFAULT_SETTINGS: Settings = {
   syncWindow: true,
   syncVault: true,
   sftpWidth: 440,
+  windowFrame: "custom",
+  alwaysOnTop: false,
+  hideTabIndex: false,
+  hideTabCloseButton: false,
+  closeOnLastTab: false,
+  focusFollowsMouse: false,
+  defaultShell: "",
+  shellWorkingDir: "",
+  showBuiltinProfiles: true,
+  recentProfilesCount: 3,
+  recentProfiles: [],
 };
 
 /** The effective xterm font stack: main family, plus an optional fallback
@@ -120,6 +148,7 @@ export function lineHeightOf(s: Settings): number {
 }
 
 const STORAGE_KEY = "moorix.settings";
+const STORE_KEY = "settings";
 
 type SettingsContextValue = {
   settings: Settings;
@@ -129,6 +158,9 @@ type SettingsContextValue = {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  // localStorage gives an instant first paint; the persistent tauri-plugin-store
+  // (cross-platform, survives OS keychain-less mobile) is the source of truth and
+  // is loaded right after mount, then mirrored back to both on every change.
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -138,8 +170,40 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  // Skip the first store-write (it would just echo what we loaded) and debounce
+  // subsequent writes so dragging a slider / typing custom CSS isn't chatty.
+  const loadedRef = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    (async () => {
+      try {
+        const store = await getStore();
+        const saved = await store.get<Partial<Settings>>(STORE_KEY);
+        if (saved && typeof saved === "object") {
+          setSettings((prev) => ({ ...prev, ...saved }));
+        }
+      } catch {
+        // Not in a Tauri runtime (e.g. plain browser) — localStorage stands in.
+      } finally {
+        loadedRef.current = true;
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    // Always keep the instant localStorage cache fresh.
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+      // ignore quota / unavailable
+    }
+    // Persist to the store once the initial load has settled, debounced.
+    if (!loadedRef.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void setValue(STORE_KEY, settings).catch(() => {});
+    }, 300);
   }, [settings]);
 
   const update = (patch: Partial<Settings>) =>

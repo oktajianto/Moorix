@@ -225,15 +225,17 @@ impl SshSession {
                     };
                     let h = handle.clone();
                     let dest_host = f.host.trim().to_string();
+                    let fwd_app = app.clone();
                     forwards.push(tauri::async_runtime::spawn(async move {
-                        crate::forward::run_local(h, bind_host, bind_port, dest_host, dest_port)
+                        crate::forward::run_local(fwd_app, h, bind_host, bind_port, dest_host, dest_port)
                             .await;
                     }));
                 }
                 "dynamic" => {
                     let h = handle.clone();
+                    let fwd_app = app.clone();
                     forwards.push(tauri::async_runtime::spawn(async move {
-                        crate::forward::run_dynamic(h, bind_host, bind_port).await;
+                        crate::forward::run_dynamic(fwd_app, h, bind_host, bind_port).await;
                     }));
                 }
                 _ => {} // "remote" and unknown kinds: not yet supported

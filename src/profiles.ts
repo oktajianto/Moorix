@@ -15,6 +15,7 @@ import {
 import type { OpenSession, TermOptions } from "./components/TerminalView";
 import { IS_MOBILE } from "./platform";
 import { getStore } from "./store";
+import { secretGet } from "./secrets";
 
 export type ProfileType = "local" | "ssh";
 
@@ -59,10 +60,25 @@ export function badgeOf(p: Profile): string | null {
   return p.type === "ssh" ? "SSH" : null;
 }
 
+/** Shell defaults from the Settings → Shell page, applied to every local
+ *  terminal. Kept module-level so `localOpen` (not a React hook) can read them;
+ *  App mirrors settings here via `setLocalShellDefaults`. */
+let localShellDefaults = { shell: "", cwd: "" };
+export function setLocalShellDefaults(d: { shell: string; cwd: string }): void {
+  localShellDefaults = d;
+}
+
 export function localOpen(command: string): OpenSession {
-  // An empty command means "use the OS default shell" (backend picks it).
+  // An empty command falls back to the configured default shell, then the OS
+  // default (backend picks it). cwd falls back to home on the backend.
   return (channel: Channel<number[]>, cols, rows) =>
-    invoke<string>("session_open", { onData: channel, cols, rows, shell: command || null });
+    invoke<string>("session_open", {
+      onData: channel,
+      cols,
+      rows,
+      shell: command || localShellDefaults.shell || null,
+      cwd: localShellDefaults.cwd || null,
+    });
 }
 
 /** Open a local serial port (desktop only). Serial has no cols/rows. */
@@ -316,9 +332,7 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
     if (s.authMethod === "key" && s.keyPath) {
       auth = { type: "key", path: s.keyPath, passphrase: null };
     } else {
-      const stored = await invoke<string | null>("secret_get", { id: p.id }).catch(
-        () => null,
-      );
+      const stored = await secretGet(p.id).catch(() => null);
       auth = { type: "password", password: stored ?? s.password ?? "" };
     }
 
@@ -335,9 +349,9 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
           port: jhProfile.ssh.port,
           username: jhProfile.ssh.username,
           // simplify auth for jump host for now
-          auth: jhProfile.ssh.authMethod === "key" 
+          auth: jhProfile.ssh.authMethod === "key"
             ? { type: "key", path: jhProfile.ssh.keyPath, passphrase: null }
-            : { type: "password", password: (await invoke<string | null>("secret_get", { id: jhProfile.id }).catch(() => null)) ?? jhProfile.ssh.password ?? "" },
+            : { type: "password", password: (await secretGet(jhProfile.id).catch(() => null)) ?? jhProfile.ssh.password ?? "" },
         };
       }
     }

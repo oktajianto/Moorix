@@ -1,10 +1,12 @@
 import type { ITheme } from "@xterm/xterm";
+import { ITERM2_THEMES } from "./iterm2Themes";
 
 /**
  * Terminal color schemes (xterm ITheme). Palettes are standard, widely-published
- * color values. "Moorix Dark" is the default.
+ * color values. "Moorix Dark" is the default. The built-in Moorix set is listed
+ * first; a curated import of iTerm2 schemes is appended below.
  */
-export const THEMES: Record<string, ITheme> = {
+const MOORIX_THEMES: Record<string, ITheme> = {
   "Moorix Dark": {
     background: "#0a0a0a",
     foreground: "#e5e5e5",
@@ -140,7 +142,12 @@ export const THEMES: Record<string, ITheme> = {
   },
 };
 
+/** All themes: built-in Moorix schemes first, then the imported iTerm2 set. */
+export const THEMES: Record<string, ITheme> = { ...MOORIX_THEMES, ...ITERM2_THEMES };
+
 export const THEME_NAMES = Object.keys(THEMES);
+/** Names of just the built-in Moorix themes (used where a short list is nicer). */
+export const MOORIX_THEME_NAMES = Object.keys(MOORIX_THEMES);
 
 export const DEFAULT_THEME = "Moorix Dark";
 
