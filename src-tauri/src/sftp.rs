@@ -25,6 +25,7 @@ pub struct SftpOpened {
 pub struct RemoteEntry {
     pub name: String,
     pub is_dir: bool,
+    pub is_symlink: bool,
     pub size: u64,
     /// Unix mtime (seconds), 0 if unknown.
     pub mtime: i64,
@@ -84,6 +85,7 @@ pub async fn sftp_list(
         out.push(RemoteEntry {
             name: entry.file_name(),
             is_dir: md.is_dir(),
+            is_symlink: md.is_symlink(),
             size: md.size.unwrap_or(0),
             mtime: md.mtime.map(|t| t as i64).unwrap_or(0),
         });
@@ -177,6 +179,33 @@ pub async fn sftp_remove(
     Ok(())
 }
 
+/// Read a chunk of a remote file for preview (up to 512KB).
+#[tauri::command]
+pub async fn sftp_preview(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    let sftp = state
+        .sftp(&sftp_id)
+        .ok_or_else(|| "sftp session not found".to_string())?;
+
+    let mut file = sftp.open(path).await.map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    let mut chunk = vec![0u8; 32 * 1024];
+    let mut read = 0;
+    while read < 512 * 1024 {
+        let n = file.read(&mut chunk).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        let take = std::cmp::min(n, 512 * 1024 - read);
+        buf.extend_from_slice(&chunk[..take]);
+        read += take;
+    }
+    Ok(buf)
+}
+
 /* ------------------------------------------------------------------------- */
 /* Transfers (upload / download), recursive, with progress + cancellation.   */
 /* ------------------------------------------------------------------------- */
@@ -186,8 +215,8 @@ pub async fn sftp_remove(
 pub enum TransferEvent {
     Started { total: u64, files: u64 },
     /// Emitted when a new file within the transfer begins (1-based `index`).
-    File { index: u64, count: u64, name: String },
-    Progress { transferred: u64, total: u64, file: String },
+    File { index: u64, count: u64, name: String, file_size: u64 },
+    Progress { transferred: u64, total: u64, file: String, file_transferred: u64, file_total: u64 },
     Done,
     Cancelled,
     Error { message: String },
@@ -197,18 +226,23 @@ pub enum TransferEvent {
 struct Prog {
     transferred: u64,
     total: u64,
+    file_transferred: u64,
+    file_total: u64,
     last: u64,
 }
 
 impl Prog {
     fn bump(&mut self, n: u64, file: &str, ch: &Channel<TransferEvent>) {
         self.transferred += n;
+        self.file_transferred += n;
         if self.transferred - self.last >= 256 * 1024 {
             self.last = self.transferred;
             let _ = ch.send(TransferEvent::Progress {
                 transferred: self.transferred,
                 total: self.total,
                 file: file.to_string(),
+                file_transferred: self.file_transferred,
+                file_total: self.file_total,
             });
         }
     }
@@ -338,9 +372,9 @@ async fn do_upload(
     }
 
     let count = files.len() as u64;
-    let mut prog = Prog { transferred: 0, total, last: 0 };
+    let mut prog = Prog { transferred: 0, total, file_transferred: 0, file_total: 0, last: 0 };
     let mut buf = vec![0u8; 32 * 1024];
-    for (i, (l, r, _)) in files.iter().enumerate() {
+    for (i, (l, r, f_size)) in files.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Ok(false);
         }
@@ -349,7 +383,10 @@ async fn do_upload(
             index: i as u64 + 1,
             count,
             name: name.clone(),
+            file_size: *f_size,
         });
+        prog.file_transferred = 0;
+        prog.file_total = *f_size;
         let mut src = tokio::fs::File::open(l).await.map_err(|e| e.to_string())?;
         let mut dst = sftp.create(r.clone()).await.map_err(|e| e.to_string())?;
         loop {
@@ -365,6 +402,12 @@ async fn do_upload(
         }
         dst.flush().await.ok();
         dst.shutdown().await.ok();
+
+        // Verify size after upload
+        let dst_meta = sftp.metadata(r.clone()).await.map_err(|e| format!("verify meta: {}", e.to_string()))?;
+        if dst_meta.size.unwrap_or(0) != *f_size {
+            return Err(format!("Transfer incomplete for {}: expected {} bytes, got {}", name, f_size, dst_meta.size.unwrap_or(0)));
+        }
     }
     Ok(true)
 }
@@ -410,9 +453,9 @@ async fn do_download(
     });
 
     let count = files.len() as u64;
-    let mut prog = Prog { transferred: 0, total, last: 0 };
+    let mut prog = Prog { transferred: 0, total, file_transferred: 0, file_total: 0, last: 0 };
     let mut buf = vec![0u8; 32 * 1024];
-    for (i, (r, l, _)) in files.iter().enumerate() {
+    for (i, (r, l, f_size)) in files.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Ok(false);
         }
@@ -421,7 +464,10 @@ async fn do_download(
             index: i as u64 + 1,
             count,
             name: name.clone(),
+            file_size: *f_size,
         });
+        prog.file_transferred = 0;
+        prog.file_total = *f_size;
         let mut src = sftp.open(r.clone()).await.map_err(|e| e.to_string())?;
         let mut dst = tokio::fs::File::create(l).await.map_err(|e| e.to_string())?;
         loop {
@@ -436,6 +482,12 @@ async fn do_download(
             prog.bump(n as u64, &name, ch);
         }
         dst.flush().await.ok();
+
+        // Verify size after download
+        let local_meta = std::fs::metadata(&l).map_err(|e| format!("verify meta: {}", e.to_string()))?;
+        if local_meta.len() != *f_size {
+            return Err(format!("Transfer incomplete for {}: expected {} bytes, got {}", name, f_size, local_meta.len()));
+        }
     }
     Ok(true)
 }

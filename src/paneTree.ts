@@ -1,4 +1,5 @@
 import type { OpenSession, TermOptions } from "./components/TerminalView";
+import type { TabDesc } from "./profiles";
 
 /**
  * A terminal tab holds a tree of panes. A leaf is one live terminal session; a
@@ -11,7 +12,12 @@ export type PaneLeaf = {
   label: string;
   open: OpenSession;
   options?: TermOptions;
+  desc?: TabDesc; // added for persistence
 };
+
+export type PaneNodeDesc =
+  | { type: "leaf"; desc?: TabDesc }
+  | { type: "split"; dir: "row" | "col"; sizes: number[]; children: PaneNodeDesc[] };
 
 export type PaneSplit = {
   type: "split";
@@ -32,7 +38,8 @@ export const makeLeaf = (
   label: string,
   open: OpenSession,
   options?: TermOptions,
-): PaneLeaf => ({ type: "leaf", paneId: nextPaneId(), label, open, options });
+  desc?: TabDesc,
+): PaneLeaf => ({ type: "leaf", paneId: nextPaneId(), label, open, options, desc });
 
 /** A stable React key for a node (its own paneId, or its first leaf's). */
 export function keyOf(node: PaneNode): string {
@@ -125,4 +132,22 @@ export function setSizesAtPath(
       idx === i ? setSizesAtPath(c, rest, sizes) : c,
     ),
   };
+}
+
+export function serializePaneNode(node: PaneNode): PaneNodeDesc | null {
+  if (node.type === "leaf") {
+    if (!node.desc) return null;
+    return { type: "leaf", desc: node.desc };
+  }
+  const children = node.children.map(serializePaneNode).filter((c): c is PaneNodeDesc => c !== null);
+  if (children.length === 0) return null;
+  if (children.length === 1) return children[0];
+
+  // Re-normalize sizes in case some children failed to serialize
+  const validIndices = node.children.map((_, i) => serializePaneNode(node.children[i]) !== null);
+  const validSizes = node.sizes.filter((_, i) => validIndices[i]);
+  const total = validSizes.reduce((a, b) => a + b, 0);
+  const sizes = validSizes.map((s) => s / (total || 1));
+
+  return { type: "split", dir: node.dir, sizes, children };
 }

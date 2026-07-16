@@ -37,16 +37,16 @@ import { checkForUpdates } from "./updater";
 import { getTheme, isLightTheme } from "./themes";
 import {
   AVAILABLE_BUILTINS,
+  createNewProfile,
+  cloneProfile,
   localOpen,
   serialOpen,
   telnetOpen,
   sshOpenFromProfile,
-  newSshProfile,
-  cloneProfile,
   termOptionsOf,
   type Profile,
-  type UserProfile,
   type TabDesc,
+  type UserProfile,
 } from "./profiles";
 import { IS_MOBILE } from "./platform";
 
@@ -55,8 +55,13 @@ type EditorIntent =
   | { mode: "connect-tab"; initial: UserProfile; tabId: string }
   | { mode: "connect-new"; initial: UserProfile };
 
-const profileLabel = (p: UserProfile) =>
-  p.name || `${p.ssh.username}@${p.ssh.host}`;
+const profileLabel = (p: UserProfile) => {
+  if (p.name) return p.name;
+  if (p.type === "ssh" && p.ssh) return `${p.ssh.username}@${p.ssh.host}`;
+  if (p.type === "telnet" && p.telnet) return p.telnet.host;
+  if (p.type === "serial" && p.serial) return p.serial.path;
+  return "Unknown Profile";
+};
 import { getStore, setValue } from "./store";
 
 type Tab =
@@ -313,15 +318,25 @@ function App() {
     } else {
       // Built-in "SSH connection" → open the SSH editor, connect on save.
       dismissWelcome();
-      setEditor({ mode: "connect-new", initial: newSshProfile("Ungrouped") });
+      setEditor({ mode: "connect-new", initial: createNewProfile("Ungrouped", "ssh") });
     }
   };
 
-  const launchUserProfile = (p: UserProfile) =>
-    openTerminalTab(sshOpenFromProfile(p), profileLabel(p), termOptionsOf(p), {
-      t: "ssh",
-      profileId: p.id,
-    });
+  const launchUserProfile = (p: UserProfile) => {
+    let opener;
+    let desc: TabDesc;
+    if (p.type === "serial" && p.serial) {
+      opener = serialOpen(p.serial.path, p.serial.baud);
+      desc = { t: "serial", path: p.serial.path, baud: p.serial.baud };
+    } else if (p.type === "telnet" && p.telnet) {
+      opener = telnetOpen(p.telnet.host, p.telnet.port);
+      desc = { t: "telnet", host: p.telnet.host, port: p.telnet.port };
+    } else {
+      opener = sshOpenFromProfile(p);
+      desc = { t: "ssh", profileId: p.id };
+    }
+    openTerminalTab(opener, profileLabel(p), termOptionsOf(p), desc);
+  };
 
   const newTab = () => {
     const def = AVAILABLE_BUILTINS.find((p) => p.id === defaultProfileId);
@@ -601,7 +616,7 @@ function App() {
                 onSshConnection={() =>
                   setEditor({
                     mode: "connect-tab",
-                    initial: newSshProfile("Ungrouped"),
+                    initial: createNewProfile("Ungrouped", "ssh"),
                     tabId: tab.id,
                   })
                 }
@@ -617,8 +632,8 @@ function App() {
                 onDeleteGroup={deleteGroup}
                 userProfiles={userProfiles}
                 onLaunchUserProfile={launchUserProfile}
-                onNewProfile={() =>
-                  setEditor({ mode: "save", initial: newSshProfile("Ungrouped") })
+                onNewProfile={(type) =>
+                  setEditor({ mode: "save", initial: createNewProfile("Ungrouped", type || "ssh") })
                 }
                 onEditProfile={(p) => setEditor({ mode: "save", initial: p })}
                 onDuplicateProfile={(p) =>
@@ -667,6 +682,7 @@ function App() {
         <ProfileEditor
           initial={editor.initial}
           groups={groups}
+          userProfiles={userProfiles}
           onSave={onEditorSave}
           onCancel={() => setEditor(null)}
         />

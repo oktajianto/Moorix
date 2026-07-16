@@ -19,6 +19,7 @@ import {
   HardDrive,
   Server,
   Loader2,
+  LinkIcon,
 } from "lucide-react";
 
 /** Pick an icon by file extension. */
@@ -62,7 +63,7 @@ type XferEvent =
   | { kind: "error"; message: string };
 
 /** One directory entry (shared shape for local + remote). */
-type Entry = { name: string; isDir: boolean; size: number; mtime: number };
+type Entry = { name: string; isDir: boolean; size: number; mtime: number; isSymlink?: boolean };
 
 const joinPath = (base: string, name: string): string => {
   const b = base.replace(/\/+$/, "");
@@ -123,6 +124,8 @@ export function SftpPanel({
     x: number;
     y: number;
   } | null>(null);
+
+  const [preview, setPreview] = useState<{ path: string; name: string; isLocal: boolean } | null>(null);
 
   // Open the SFTP session (reuses the SSH connection) and pick starting dirs.
   useEffect(() => {
@@ -378,6 +381,7 @@ export function SftpPanel({
           onDragItem={(name) => (dragRef.current = { side: "local", name })}
           onDropItem={() => onDropInto("local")}
           onContext={(name, e) => setMenu({ side: "local", name, x: e.clientX, y: e.clientY })}
+          setPreview={setPreview}
           onOpen={(name) => {
             setSelLocal(null);
             setLocalPath(joinPath(localPath, name));
@@ -409,6 +413,7 @@ export function SftpPanel({
           onDragItem={(name) => (dragRef.current = { side: "remote", name })}
           onDropItem={() => onDropInto("remote")}
           onContext={(name, e) => setMenu({ side: "remote", name, x: e.clientX, y: e.clientY })}
+          setPreview={setPreview}
           onOpen={(name) => {
             setSelRemote(null);
             setRemotePath(joinPath(remotePath, name));
@@ -493,17 +498,105 @@ export function SftpPanel({
           </div>
         </>
       )}
+
+      {preview && (
+        <PreviewModal
+          {...preview}
+          sftpId={sftpId}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }
 
 function EntryIcon({ entry }: { entry: Entry }) {
+  if (entry.isSymlink) {
+    return <LinkIcon className="h-3.5 w-3.5 shrink-0" style={{ color: "#c084fc" }} />;
+  }
   const Icon = entry.isDir ? Folder : iconForFile(entry.name);
   return (
     <Icon
       className="h-3.5 w-3.5 shrink-0"
       style={{ color: entry.isDir ? "#60a5fa" : "var(--m-muted)" }}
     />
+  );
+}
+
+function PreviewModal({
+  path,
+  name,
+  isLocal,
+  sftpId,
+  onClose,
+}: {
+  path: string;
+  name: string;
+  isLocal: boolean;
+  sftpId: string | null;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [content, setContent] = useState<{ type: "text" | "image"; data: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const ext = name.split(".").pop()?.toLowerCase() || "";
+        const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext);
+        const args = isLocal ? { path } : { sftpId, path };
+        const cmd = isLocal ? "local_preview" : "sftp_preview";
+        const res = await invoke<number[]>(cmd, args);
+        if (!active) return;
+        
+        const bytes = new Uint8Array(res);
+        if (isImage) {
+          const type = ext === "svg" ? "image/svg+xml" : `image/${ext === "jpg" ? "jpeg" : ext}`;
+          const blob = new Blob([bytes], { type });
+          setContent({ type: "image", data: URL.createObjectURL(blob) });
+        } else {
+          setContent({ type: "text", data: new TextDecoder().decode(bytes) });
+        }
+      } catch (e) {
+        if (active) setError(String(e));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [path, isLocal, sftpId, name]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="flex max-h-full max-w-2xl w-full flex-col rounded-lg border shadow-2xl" style={{ background: "var(--m-panel)", borderColor: "var(--m-border)" }}>
+        <div className="flex shrink-0 items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--m-border)" }}>
+          <h2 className="text-sm font-semibold truncate" title={path}>
+            Preview: {name}
+          </h2>
+          <button onClick={onClose} className="rounded p-1 hover:bg-black/10">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-4 text-sm">
+          {loading && (
+            <div className="flex items-center justify-center text-muted h-32">
+              <Loader2 className="h-5 w-5 animate-spin opacity-50" />
+            </div>
+          )}
+          {error && <div className="text-red-500">{error}</div>}
+          {content?.type === "image" && (
+            <img src={content.data} alt={name} className="mx-auto max-h-full max-w-full rounded" />
+          )}
+          {content?.type === "text" && (
+            <pre className="whitespace-pre-wrap font-mono text-[11px]" style={{ color: "var(--m-text)" }}>
+              {content.data}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -545,6 +638,7 @@ function FileHalf({
   onDragItem,
   onDropItem,
   onContext,
+  setPreview,
 }: {
   title: string;
   Icon: typeof HardDrive;
@@ -563,6 +657,7 @@ function FileHalf({
   onDragItem: (name: string) => void;
   onDropItem: () => void;
   onContext: (name: string | null, e: React.MouseEvent) => void;
+  setPreview: (p: { path: string; name: string; isLocal: boolean } | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(path);
@@ -664,7 +759,10 @@ function FileHalf({
                 ev.dataTransfer.effectAllowed = "copy";
               }}
               onClick={() => onSelect(e.name)}
-              onDoubleClick={() => e.isDir && onOpen(e.name)}
+                onDoubleClick={() => {
+                  if (e.isDir) onOpen(e.name);
+                  else setPreview({ path: joinPath(path, e.name), name: e.name, isLocal: side === "local" });
+                }}
               onContextMenu={(ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();

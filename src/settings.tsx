@@ -41,9 +41,13 @@ export type Settings = {
   wordSeparators: string;
   // Terminal — clipboard
   copyOnSelect: boolean;
+  copyFormatting: boolean;
+  bracketedPaste: boolean;
   warnMultilinePaste: boolean;
   replaceLineBreaks: boolean;
   trimWhitespace: boolean;
+  // Terminal — links
+  requireKeyToClickLinks: boolean;
   // Terminal — sound / startup
   bell: BellMode;
   autoOpenTerminal: boolean;
@@ -52,9 +56,12 @@ export type Settings = {
   hotkeys: Record<string, string[]>;
   // Config sync
   syncHost: string;
+  syncToken: string;
   syncHotkeys: boolean;
   syncWindow: boolean;
   syncVault: boolean;
+  // SFTP
+  sftpWidth: number;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -82,17 +89,22 @@ export const DEFAULT_SETTINGS: Settings = {
   pasteOnMiddleClick: false,
   wordSeparators: " ()[]{}'\"`",
   copyOnSelect: false,
+  copyFormatting: false,
+  bracketedPaste: true,
   warnMultilinePaste: true,
   replaceLineBreaks: false,
   trimWhitespace: true,
+  requireKeyToClickLinks: true,
   bell: "off",
   autoOpenTerminal: false,
   restoreTabs: false,
   hotkeys: {},
   syncHost: "",
+  syncToken: "",
   syncHotkeys: true,
   syncWindow: true,
   syncVault: true,
+  sftpWidth: 440,
 };
 
 /** The effective xterm font stack: main family, plus an optional fallback

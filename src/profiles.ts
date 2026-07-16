@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { OpenSession, TermOptions } from "./components/TerminalView";
 import { IS_MOBILE } from "./platform";
+import { getStore } from "./store";
 
 export type ProfileType = "local" | "ssh";
 
@@ -101,6 +102,7 @@ export type SshAdvanced = {
   agentForward: boolean;
   skipBanner: boolean;
   reuseSession: boolean;
+  jumpHostProfileId: string;
   keepAliveInterval: number;
   maxKeepAliveCount: number;
   readyTimeout: number;
@@ -129,9 +131,19 @@ export type SshOptions = {
   backspaceMode: BackspaceMode;
 };
 
+export type SerialOptions = {
+  path: string;
+  baud: number;
+};
+
+export type TelnetOptions = {
+  host: string;
+  port: number;
+};
+
 export type UserProfile = {
   id: string;
-  type: "ssh";
+  type: "ssh" | "serial" | "telnet";
   name: string;
   group: string;
   iconName: string;
@@ -140,6 +152,8 @@ export type UserProfile = {
   whenSessionEnds: string;
   clearTerminal: boolean;
   ssh: SshOptions;
+  serial?: SerialOptions;
+  telnet?: TelnetOptions;
 };
 
 /** Algorithm options for the CIPHERS tab. */
@@ -192,9 +206,10 @@ export function defaultSshOptions(): SshOptions {
       agentForward: false,
       skipBanner: false,
       reuseSession: true,
+      jumpHostProfileId: "",
       keepAliveInterval: 5000,
       maxKeepAliveCount: 10,
-      readyTimeout: 20000,
+      readyTimeout: 15000,
     },
     ciphers: {
       ciphers: [...CIPHER_DEFAULTS.ciphers],
@@ -209,30 +224,51 @@ export function defaultSshOptions(): SshOptions {
   };
 }
 
-export function newSshProfile(group = "Ungrouped"): UserProfile {
-  return {
-    id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    type: "ssh",
-    name: "",
-    group,
-    iconName: "server",
-    color: "#000000",
-    disableDynamicTitle: true,
-    whenSessionEnds: "Auto",
-    clearTerminal: true,
-    ssh: defaultSshOptions(),
+export function createNewProfile(group: string, type: "ssh" | "serial" | "telnet" = "ssh"): UserProfile {
+  let name = "New Session";
+  let iconName = "MonitorSmartphone";
+  if (type === "serial") {
+    name = "New Serial Profile";
+    iconName = "Cpu";
+  } else if (type === "telnet") {
+    name = "New Telnet Profile";
+    iconName = "Network";
+  }
+
+  const p: UserProfile = {
+    id: crypto.randomUUID(),
+    type,
+    name,
+    group: group || "My Profiles",
+    iconName,
+    color: "#ffffff",
+    disableDynamicTitle: false,
+    whenSessionEnds: "close",
+    clearTerminal: false,
+    ssh: structuredClone(defaultSshOptions()),
   };
+
+  if (type === "serial") {
+    p.serial = { path: "", baud: 115200 };
+  } else if (type === "telnet") {
+    p.telnet = { host: "", port: 23 };
+  }
+
+  return p;
 }
 
 /** Deep-clone a user profile as a new, independent profile (fresh id, "(copy)"
  *  name). The password lives in the OS keychain keyed by profile id, so the
  *  clone starts without one — the user re-enters it in the editor if needed. */
 export function cloneProfile(p: UserProfile): UserProfile {
-  return {
+  const clone = {
     ...p,
     id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: p.name ? `${p.name} (copy)` : "Untitled (copy)",
-    ssh: {
+  };
+
+  if (p.type === "ssh" && p.ssh) {
+    clone.ssh = {
       ...p.ssh,
       password: "",
       ports: p.ssh.ports.map((f) => ({ ...f })),
@@ -245,8 +281,14 @@ export function cloneProfile(p: UserProfile): UserProfile {
         hostKey: [...p.ssh.ciphers.hostKey],
         compression: [...p.ssh.ciphers.compression],
       },
-    },
-  };
+    };
+  } else if (p.type === "serial" && p.serial) {
+    clone.serial = { ...p.serial };
+  } else if (p.type === "telnet" && p.telnet) {
+    clone.telnet = { ...p.telnet };
+  }
+
+  return clone as UserProfile;
 }
 
 /** Lucide icons selectable for a profile. */
@@ -279,7 +321,30 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
       );
       auth = { type: "password", password: stored ?? s.password ?? "" };
     }
+
+    let jumpHostConfig: any = null;
+    if (s.advanced.jumpHostProfileId) {
+      // Find the jump host profile (this assumes userProfiles is available globally, 
+      // but in profiles.ts we don't have it. It's better to pass it in `UserProfile` or fetch it from store).
+      const store = await getStore();
+      const profiles = await store.get<UserProfile[]>("userProfiles");
+      const jhProfile = profiles?.find((p) => p.id === s.advanced.jumpHostProfileId);
+      if (jhProfile) {
+        jumpHostConfig = {
+          host: jhProfile.ssh.host,
+          port: jhProfile.ssh.port,
+          username: jhProfile.ssh.username,
+          // simplify auth for jump host for now
+          auth: jhProfile.ssh.authMethod === "key" 
+            ? { type: "key", path: jhProfile.ssh.keyPath, passphrase: null }
+            : { type: "password", password: (await invoke<string | null>("secret_get", { id: jhProfile.id }).catch(() => null)) ?? jhProfile.ssh.password ?? "" },
+        };
+      }
+    }
+
     const config = {
+      profileId: p.id,
+      jumpHostConfig,
       host: s.host,
       port: s.port,
       username: s.username,
@@ -287,6 +352,11 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
       keepAliveInterval: s.advanced.keepAliveInterval,
       keepAliveMax: s.advanced.maxKeepAliveCount,
       readyTimeout: s.advanced.readyTimeout,
+      jumpHostProfileId: s.advanced.jumpHostProfileId,
+      x11: s.advanced.x11,
+      agentForward: s.advanced.agentForward,
+      skipBanner: s.advanced.skipBanner,
+      reuseSession: s.advanced.reuseSession,
       ciphers: {
         ciphers: s.ciphers.ciphers,
         kex: s.ciphers.kex,
@@ -311,9 +381,9 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
 /** Per-session terminal behaviour (COLORS / INPUT / LOGIN SCRIPTS tabs). */
 export function termOptionsOf(p: UserProfile): TermOptions {
   return {
-    colorScheme: p.ssh.colorScheme,
-    backspaceMode: p.ssh.backspaceMode,
-    loginScripts: p.ssh.loginScripts,
-    reconnect: true, // SSH sessions auto-reconnect on an unexpected drop
+    colorScheme: p.ssh?.colorScheme || "",
+    backspaceMode: p.ssh?.backspaceMode || "passthrough",
+    loginScripts: p.ssh?.loginScripts || [],
+    reconnect: p.type === "ssh", // SSH sessions auto-reconnect on an unexpected drop
   };
 }

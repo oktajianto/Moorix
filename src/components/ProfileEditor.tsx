@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Lightbulb,
   AtSign,
@@ -19,6 +20,8 @@ import {
   type PortForwardType,
   type LoginMatchMode,
   type BackspaceMode,
+  type SerialOptions,
+  type TelnetOptions,
 } from "../profiles";
 import { getTheme, THEME_NAMES } from "../themes";
 
@@ -45,11 +48,13 @@ const inputCls =
 export function ProfileEditor({
   initial,
   groups,
+  userProfiles,
   onSave,
   onCancel,
 }: {
   initial: UserProfile;
   groups: string[];
+  userProfiles: UserProfile[];
   onSave: (p: UserProfile) => void;
   onCancel: () => void;
 }) {
@@ -63,12 +68,25 @@ export function ProfileEditor({
     setSsh({ advanced: { ...p.ssh.advanced, ...patch } });
 
   const toggleCipher = (cat: keyof SshOptions["ciphers"], value: string) => {
+    if (!p.ssh) return;
     const cur = p.ssh.ciphers[cat];
     const next = cur.includes(value)
       ? cur.filter((v) => v !== value)
       : [...cur, value];
     setSsh({ ciphers: { ...p.ssh.ciphers, [cat]: next } });
   };
+
+  const setSerial = (patch: Partial<SerialOptions>) =>
+    setP((v) => ({ ...v, serial: { ...v.serial!, ...patch } }));
+
+  const setTelnet = (patch: Partial<TelnetOptions>) =>
+    setP((v) => ({ ...v, telnet: { ...v.telnet!, ...patch } }));
+
+  const availableTabs = TABS.filter((t) => {
+    if (p.type === "serial") return ["general", "colors", "input"].includes(t.id);
+    if (p.type === "telnet") return ["general", "colors", "login", "input"].includes(t.id);
+    return true; // SSH shows all
+  });
 
   const IconPreview = iconByName(p.iconName);
 
@@ -183,7 +201,7 @@ export function ProfileEditor({
             className="sticky top-0 z-10 flex flex-wrap gap-4 border-b px-6 py-3 text-xs font-medium"
             style={{ background: "var(--m-bg)", borderColor: "var(--m-border)" }}
           >
-            {TABS.map((t) => (
+            {availableTabs.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
@@ -199,12 +217,20 @@ export function ProfileEditor({
           </div>
 
           <div className="p-6">
-            {tab === "general" && (
+            {tab === "general" && p.type === "serial" && (
+              <SerialGeneralTab p={p} setSerial={setSerial} />
+            )}
+            {tab === "general" && p.type === "telnet" && (
+              <TelnetGeneralTab p={p} setTelnet={setTelnet} />
+            )}
+            {tab === "general" && p.type === "ssh" && (
               <GeneralTab p={p} setSsh={setSsh} />
             )}
-            {tab === "ports" && <PortsTab p={p} setSsh={setSsh} />}
-            {tab === "advanced" && <AdvancedTab p={p} setAdv={setAdv} />}
-            {tab === "ciphers" && (
+            {tab === "ports" && p.type === "ssh" && <PortsTab p={p} setSsh={setSsh} />}
+            {tab === "advanced" && p.type === "ssh" && (
+              <AdvancedTab p={p} setAdv={setAdv} userProfiles={userProfiles} />
+            )}
+            {tab === "ciphers" && p.type === "ssh" && (
               <CiphersTab p={p} toggleCipher={toggleCipher} />
             )}
             {tab === "colors" && <ColorsTab p={p} setSsh={setSsh} />}
@@ -405,9 +431,11 @@ function PortsTab({
 function AdvancedTab({
   p,
   setAdv,
+  userProfiles,
 }: {
   p: UserProfile;
   setAdv: (patch: Partial<SshOptions["advanced"]>) => void;
+  userProfiles: UserProfile[];
 }) {
   const a = p.ssh.advanced;
   return (
@@ -419,6 +447,25 @@ function AdvancedTab({
       <NumberRow label="Keep Alive Interval (Milliseconds)" value={a.keepAliveInterval} onChange={(v) => setAdv({ keepAliveInterval: v })} />
       <NumberRow label="Max Keep Alive Count" value={a.maxKeepAliveCount} onChange={(v) => setAdv({ maxKeepAliveCount: v })} />
       <NumberRow label="Ready Timeout (Milliseconds)" value={a.readyTimeout} onChange={(v) => setAdv({ readyTimeout: v })} />
+
+      <div className="mt-4 mb-1.5 text-sm" style={{ color: "var(--m-text)" }}>
+        Jump Host Proxy
+      </div>
+      <select
+        className={`${inputCls} w-full`}
+        style={inputStyle}
+        value={a.jumpHostProfileId || ""}
+        onChange={(e) => setAdv({ jumpHostProfileId: e.target.value })}
+      >
+        <option value="">None (Direct connection)</option>
+        {userProfiles
+          .filter((u) => u.type === "ssh" && u.id !== p.id)
+          .map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name || `${u.ssh.username}@${u.ssh.host}`}
+            </option>
+          ))}
+      </select>
     </div>
   );
 }
@@ -606,6 +653,83 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
         style={{ left: checked ? "1.125rem" : "0.125rem" }}
       />
     </button>
+  );
+}
+
+function SerialGeneralTab({ p, setSerial }: { p: UserProfile; setSerial: (patch: Partial<SerialOptions>) => void; }) {
+  const [ports, setPorts] = useState<string[]>([]);
+  useEffect(() => {
+    invoke<string[]>("serial_ports").then(setPorts).catch(console.error);
+  }, []);
+
+  return (
+    <div className="max-w-2xl">
+      <div className="mb-4 flex gap-3">
+        <div className="flex-1">
+          <Label>Port</Label>
+          {ports.length > 0 ? (
+            <select
+              className={`${inputCls} w-full`}
+              style={inputStyle}
+              value={p.serial?.path || ""}
+              onChange={(e) => setSerial({ path: e.target.value })}
+            >
+              <option value="">Select a port...</option>
+              {ports.map((port) => (
+                <option key={port} value={port}>{port}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className={`${inputCls} w-full`}
+              style={inputStyle}
+              value={p.serial?.path || ""}
+              onChange={(e) => setSerial({ path: e.target.value })}
+              placeholder="COM1 or /dev/ttyUSB0"
+            />
+          )}
+        </div>
+        <div className="w-32">
+          <Label>Baud Rate</Label>
+          <input
+            className={`${inputCls} w-full`}
+            style={inputStyle}
+            value={p.serial?.baud || 115200}
+            onChange={(e) => setSerial({ baud: Number(e.target.value) || 115200 })}
+            type="number"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TelnetGeneralTab({ p, setTelnet }: { p: UserProfile; setTelnet: (patch: Partial<TelnetOptions>) => void; }) {
+  return (
+    <div className="max-w-2xl">
+      <div className="mb-4 flex gap-3">
+        <div className="flex-1">
+          <Label>Host</Label>
+          <input
+            className={`${inputCls} w-full`}
+            style={inputStyle}
+            value={p.telnet?.host || ""}
+            onChange={(e) => setTelnet({ host: e.target.value })}
+            placeholder="example.com"
+          />
+        </div>
+        <div className="w-24">
+          <Label>Port</Label>
+          <input
+            className={`${inputCls} w-full`}
+            style={inputStyle}
+            value={p.telnet?.port || 23}
+            onChange={(e) => setTelnet({ port: Number(e.target.value) || 23 })}
+            type="number"
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 

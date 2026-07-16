@@ -4,7 +4,7 @@ import { iconByName, type UserProfile } from "../profiles";
 
 type Props = {
   onClose: () => void;
-  onNewSsh: () => void;
+  onNewSsh: (type: "ssh" | "serial" | "telnet") => void;
   userProfiles: UserProfile[];
   onDuplicate: (p: UserProfile) => void;
 };
@@ -21,15 +21,15 @@ type Row =
  */
 export function NewProfilePicker({ onClose, onNewSsh, userProfiles, onDuplicate }: Props) {
   const disabledTemplates = [
-    { id: "raw", name: "Raw socket connection", badge: "Telnet", Icon: Network },
-    { id: "serial", name: "Serial connection", badge: "Serial", Icon: Cpu },
-    { id: "telnet", name: "Telnet session", badge: "Telnet", Icon: Network },
+    { id: "raw", name: "Raw socket connection", badge: "Raw", Icon: Network },
   ];
 
   // Only enabled rows are keyboard-navigable.
   const rows = useMemo<Row[]>(
     () => [
       { kind: "template", id: "ssh", name: "SSH connection", badge: "SSH", Icon: MonitorSmartphone },
+      { kind: "template", id: "serial", name: "Serial connection", badge: "Serial", Icon: Cpu },
+      { kind: "template", id: "telnet", name: "Telnet session", badge: "Telnet", Icon: Network },
       ...userProfiles.map((profile) => ({ kind: "duplicate", profile }) as Row),
     ],
     [userProfiles],
@@ -39,8 +39,9 @@ export function NewProfilePicker({ onClose, onNewSsh, userProfiles, onDuplicate 
   const activeRef = useRef<HTMLButtonElement>(null);
 
   const pick = (row: Row) => {
-    if (row.kind === "template") onNewSsh();
-    else onDuplicate(row.profile);
+    if (row.kind === "template") {
+      onNewSsh(row.id as "ssh" | "serial" | "telnet");
+    } else onDuplicate(row.profile);
     onClose();
   };
 

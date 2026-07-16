@@ -73,6 +73,7 @@ pub struct AppState {
     counter: AtomicU64,
     host_key_counter: AtomicU64,
     pending_host_keys: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
+    ssh_pool: Mutex<HashMap<String, SshHandle>>,
 }
 
 impl AppState {
@@ -158,5 +159,13 @@ impl AppState {
 
     pub fn clear_cancel(&self, id: &str) {
         self.transfers.lock().unwrap().remove(id);
+    }
+
+    pub fn get_pooled_ssh(&self, profile_id: &str) -> Option<SshHandle> {
+        self.ssh_pool.lock().unwrap().get(profile_id).cloned()
+    }
+
+    pub fn set_pooled_ssh(&self, profile_id: String, handle: SshHandle) {
+        self.ssh_pool.lock().unwrap().insert(profile_id, handle);
     }
 }

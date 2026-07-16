@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { Terminal, type FontWeight } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
@@ -45,6 +47,8 @@ type Ref<T> = { current: T };
 type PaneEntry = {
   term: Terminal;
   fit: FitAddon;
+  serialize: SerializeAddon;
+  webgl: Ref<WebglAddon | null>;
   sessionId: Ref<string | null>;
   options: Ref<TermOptions>;
   settings: Ref<Settings>;
@@ -63,7 +67,19 @@ export function copyPane(paneId: string): void {
   const sel = e.term.getSelection();
   if (!sel) return;
   const text = e.settings.current.trimWhitespace ? sel.trim() : sel;
-  if (text) void navigator.clipboard.writeText(text).catch(() => {});
+  if (!text) return;
+
+  if (e.settings.current.copyFormatting) {
+    const html = e.serialize.serializeAsHTML({ onlySelection: true });
+    void navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([text], { type: "text/plain" }),
+      }),
+    ]).catch(() => {});
+  } else {
+    void navigator.clipboard.writeText(text).catch(() => {});
+  }
 }
 export function pastePane(paneId: string): void {
   const e = POOL.get(paneId);
@@ -159,7 +175,26 @@ function attachTerminalBehaviors(
     const raw = term.getSelection();
     if (!raw) return;
     const text = settingsRef.current.trimWhitespace ? raw.trim() : raw;
-    if (text) void navigator.clipboard.writeText(text).catch(() => {});
+    if (!text) return;
+
+    if (settingsRef.current.copyFormatting) {
+      // Find the serialize addon from POOL (since attachTerminalBehaviors doesn't have it).
+      // Wait, we can pass serializeAddon to attachTerminalBehaviors or just find it.
+      // Better yet, just find the pane entry from POOL. But we don't have paneId.
+      // Let's find it by term.
+      const entry = Array.from(POOL.values()).find((e) => e.term === term);
+      if (entry) {
+        const html = entry.serialize.serializeAsHTML({ onlySelection: true });
+        void navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([html], { type: "text/html" }),
+            "text/plain": new Blob([text], { type: "text/plain" }),
+          }),
+        ]).catch(() => {});
+        return;
+      }
+    }
+    void navigator.clipboard.writeText(text).catch(() => {});
   };
 
   const paste = async () => {
@@ -263,19 +298,40 @@ function createEntry(
     drawBoldTextInBrightColors: settings.boldBright,
     scrollOnUserInput: settings.scrollOnInput,
     macOptionIsMeta: settings.altIsMeta,
+    wordSeparator: settings.wordSeparators,
+    ignoreBracketedPasteMode: !settings.bracketedPaste,
     theme: getTheme(optionsRef.current.colorScheme || settings.themeName),
   });
 
   const fit = new FitAddon();
+  const serialize = new SerializeAddon();
   term.loadAddon(fit);
+  term.loadAddon(serialize);
+  term.loadAddon(
+    new WebLinksAddon((event: MouseEvent, uri: string) => {
+      if (settingsRef.current.requireKeyToClickLinks && !event.ctrlKey && !event.metaKey) return;
+      window.open(uri, "_blank");
+    })
+  );
+
+  if (settings.sixel) {
+    import("@xterm/addon-image").then(({ ImageAddon }) => {
+      try {
+        term.loadAddon(new ImageAddon());
+      } catch {}
+    }).catch(() => {});
+  }
   term.open(container);
 
   // Renderer: WebGL is fast but rasterises glyphs individually, so it can't
   // shape ligatures — fall back to the DOM renderer when ligatures are on or the
   // user picked "dom". Renderer choice applies to newly opened terminals.
+  const webglRef: Ref<WebglAddon | null> = { current: null };
   if (settings.rendererType === "webgl" && !settings.fontLigatures) {
     try {
-      term.loadAddon(new WebglAddon());
+      const w = new WebglAddon();
+      term.loadAddon(w);
+      webglRef.current = w;
     } catch {
       // WebGL unavailable — xterm falls back to its canvas/DOM renderer.
     }
@@ -417,15 +473,19 @@ function createEntry(
 
   startSession();
 
-  return {
+  const entry: PaneEntry = {
     term,
     fit,
+    serialize,
+    webgl: webglRef,
     sessionId,
     options: optionsRef,
     settings: settingsRef,
     write: sendData,
     dispose,
   };
+
+  return entry;
 }
 
 /**
@@ -520,6 +580,21 @@ export function TerminalView({
       const id = entry.sessionId.current;
       if (id) {
         void invoke("session_resize", { id, cols: term.cols, rows: term.rows });
+      }
+    }
+    // 3. Renderer Switch
+    const wantWebgl = settings.rendererType === "webgl" && !settings.fontLigatures;
+    for (const entry of Array.from(POOL.values())) {
+      const hasWebgl = entry.webgl.current !== null;
+      if (wantWebgl && !hasWebgl) {
+        try {
+          const w = new WebglAddon();
+          entry.term.loadAddon(w);
+          entry.webgl.current = w;
+        } catch {}
+      } else if (!wantWebgl && hasWebgl) {
+        entry.webgl.current?.dispose();
+        entry.webgl.current = null;
       }
     }
   }, [settings, options]);

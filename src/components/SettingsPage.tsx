@@ -67,7 +67,7 @@ type Props = {
   onDeleteGroup: (name: string) => void;
   userProfiles: UserProfile[];
   onLaunchUserProfile: (p: UserProfile) => void;
-  onNewProfile: () => void;
+  onNewProfile: (type?: "ssh" | "serial" | "telnet") => void;
   onEditProfile: (p: UserProfile) => void;
   onDuplicateProfile: (p: UserProfile) => void;
   onDeleteProfile: (id: string) => void;
@@ -204,9 +204,9 @@ function ProfilesSection({
     setGroupPromptOpen(false);
   };
 
-  const startNewSsh = () => {
+  const startNewSsh = (type: "ssh" | "serial" | "telnet") => {
     setPickerOpen(false);
-    onNewProfile();
+    onNewProfile(type);
   };
 
   const inputStyle = {
@@ -959,6 +959,12 @@ function TerminalSection() {
         checked={settings.pasteOnMiddleClick}
         onChange={(v) => update({ pasteOnMiddleClick: v })}
       />
+      <ToggleRow
+        title="Require key to click links"
+        subtitle="Hold Ctrl/Cmd to click links"
+        checked={settings.requireKeyToClickLinks}
+        onChange={(v) => update({ requireKeyToClickLinks: v })}
+      />
       <FieldRow label="Word separators" sublabel="Double-click selection will stop at these characters">
         <input
           value={settings.wordSeparators}
@@ -973,6 +979,18 @@ function TerminalSection() {
         title="Copy on select"
         checked={settings.copyOnSelect}
         onChange={(v) => update({ copyOnSelect: v })}
+      />
+      <ToggleRow
+        title="Copy with formatting"
+        subtitle="Copy text with colors and formatting (rich clipboard)"
+        checked={settings.copyFormatting}
+        onChange={(v) => update({ copyFormatting: v })}
+      />
+      <ToggleRow
+        title="Bracketed paste"
+        subtitle="Wrap pasted text in bracketed paste mode (helps avoid accidental execution)"
+        checked={settings.bracketedPaste}
+        onChange={(v) => update({ bracketedPaste: v })}
       />
       <ToggleRow
         title="Warn on multi-line paste"
@@ -1245,13 +1263,73 @@ function ConfigSyncSection() {
             <input
               value={settings.syncHost}
               onChange={(e) => update({ syncHost: e.target.value })}
-              placeholder="https://sync.example.com"
+              placeholder="http://localhost:3000"
               className="w-72 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
               style={inputStyle}
             />
           </FieldRow>
+          <FieldRow label="Sync token">
+            <input
+              value={settings.syncToken || ""}
+              onChange={(e) => update({ syncToken: e.target.value })}
+              placeholder="user123 (unique ID)"
+              className="w-72 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+              style={inputStyle}
+            />
+          </FieldRow>
+          
+          <div className="mt-4 flex gap-3">
+            <button
+              onClick={async () => {
+                if (!settings.syncHost || !settings.syncToken) {
+                  alert("Please enter host and token"); return;
+                }
+                try {
+                  const host = settings.syncHost.replace(/\/$/, "");
+                  const res = await fetch(`${host}/sync/${settings.syncToken}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(settings),
+                  });
+                  if (res.ok) alert("Config pushed successfully!");
+                  else alert("Failed to push config.");
+                } catch (e) {
+                  alert("Error: " + String(e));
+                }
+              }}
+              className="rounded-md px-4 py-2 text-sm font-medium text-white shadow-sm"
+              style={{ background: "#06b6d4" }}
+            >
+              Push Config
+            </button>
+            <button
+              onClick={async () => {
+                if (!settings.syncHost || !settings.syncToken) {
+                  alert("Please enter host and token"); return;
+                }
+                try {
+                  const host = settings.syncHost.replace(/\/$/, "");
+                  const res = await fetch(`${host}/sync/${settings.syncToken}`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    update(data);
+                    alert("Config pulled successfully!");
+                  } else {
+                    alert("Failed to pull config (not found?).");
+                  }
+                } catch (e) {
+                  alert("Error: " + String(e));
+                }
+              }}
+              className="rounded-md border px-4 py-2 text-sm font-medium"
+              style={{ borderColor: "var(--m-border)", color: "var(--m-text)" }}
+            >
+              Pull Config
+            </button>
+          </div>
+
           <div
-            className="mt-4 rounded-md border p-4 text-sm"
+            className="mt-6 rounded-md border p-4 text-sm"
             style={{ borderColor: "#2563eb", background: "rgba(37,99,235,0.08)", color: "var(--m-text)" }}
           >
             Config sync requires a compatible sync server (self-hosted). Enter its URL above
