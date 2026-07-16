@@ -534,7 +534,7 @@ pub async fn sftp_compress(
     names: Vec<String>,
 ) -> Result<(), String> {
     let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
-    let mut channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
+    let channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
     
     // Build tar zip command
     let names_escaped: Vec<String> = names.iter().map(|n| format!("'{}'", n.replace("'", "'\''"))).collect();
@@ -552,7 +552,7 @@ pub async fn sftp_extract(
     path: String,
 ) -> Result<(), String> {
     let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
-    let mut channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
+    let channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
     
     let path_escaped = format!("'{}'", path.replace("'", "'\''"));
     let dir_escaped = format!("'{}'", path.rsplit_once('/').unwrap_or((".", &path)).0.replace("'", "'\''"));
@@ -577,7 +577,7 @@ pub async fn sftp_paste(
     names: Vec<String>,
 ) -> Result<(), String> {
     let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
-    let mut channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
+    let channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
     
     let cmd_base = if op == "cut" { "mv" } else { "cp -r" };
     let names_escaped: Vec<String> = names.iter().map(|n| format!("'{}'", n.replace("'", "'\''"))).collect();

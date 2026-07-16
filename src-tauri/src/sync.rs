@@ -1,9 +1,8 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit},
-    Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
 };
 use pbkdf2::pbkdf2_hmac;
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -78,13 +77,15 @@ const NONCE_LEN: usize = 12;
 
 pub fn encrypt_data(password: &str, data: &str) -> Result<Vec<u8>, String> {
     let mut salt = [0u8; SALT_LEN];
-    OsRng.fill_bytes(&mut salt);
+    getrandom::fill(&mut salt).map_err(|_| "Failed to generate random salt".to_string())?;
 
     let mut key = [0u8; 32];
     pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, 100_000, &mut key);
 
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "Invalid key length".to_string())?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    getrandom::fill(&mut nonce_bytes).map_err(|_| "Failed to generate random nonce".to_string())?;
+    let nonce = Nonce::from(nonce_bytes);
 
     let ciphertext = cipher
         .encrypt(&nonce, data.as_bytes())
@@ -111,10 +112,10 @@ pub fn decrypt_data(password: &str, data: &[u8]) -> Result<String, String> {
     pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, 100_000, &mut key);
 
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "Invalid key length".to_string())?;
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce = Nonce::try_from(nonce_bytes).map_err(|_| "Invalid nonce".to_string())?;
 
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|_| "Decryption failed or incorrect password".to_string())?;
 
     String::from_utf8(plaintext).map_err(|_| "Invalid UTF-8".to_string())
