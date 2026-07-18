@@ -71,6 +71,10 @@ jobs:
           #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD = the key password
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Google OAuth client secret, baked in at compile time (see
+          # src-tauri/src/cloud_auth.rs). Add repo secret:
+          #   MOORIX_GOOGLE_CLIENT_SECRET = the OAuth client secret
+          MOORIX_GOOGLE_CLIENT_SECRET: ${{ secrets.MOORIX_GOOGLE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Moorix ${{ github.ref_name }}"
