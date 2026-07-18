@@ -35,6 +35,8 @@ import {
   setHotkeyCapture,
 } from "../hotkeys";
 import { getVersion } from "@tauri-apps/api/app";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getStore, setValue } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import logo from "../assets/moorix-logo.png";
@@ -1267,6 +1269,52 @@ function HotkeysSection() {
 function ConfigSyncSection() {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<"sync" | "advanced">("sync");
+  const [syncBusy, setSyncBusy] = useState<"push" | "pull" | null>(null);
+  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const doPush = async () => {
+    if (syncBusy) return;
+    const pass = window.prompt("Masukkan/Buat Master Password untuk enkripsi:");
+    if (!pass) return;
+    setSyncBusy("push");
+    setSyncMsg(null);
+    try {
+      const payload = await invoke<number[]>("export_sync_data", { password: pass });
+      const token = await getGoogleAccessToken();
+      await invoke<string>("drive_upload_appdata", {
+        accessToken: token,
+        name: SYNC_DRIVE_FILE,
+        data: payload,
+      });
+      setSyncMsg({ ok: true, text: `Backup terenkripsi (${payload.length.toLocaleString()} bytes) tersimpan di Google Drive.` });
+    } catch (err) {
+      setSyncMsg({ ok: false, text: `Gagal push: ${err}` });
+    } finally {
+      setSyncBusy(null);
+    }
+  };
+
+  const doPull = async () => {
+    if (syncBusy) return;
+    const pass = window.prompt("Masukkan Master Password untuk dekripsi:");
+    if (!pass) return;
+    if (!window.confirm("Konfigurasi & rahasia Vault di perangkat ini akan DITIMPA dengan backup dari Google Drive. Lanjutkan?")) return;
+    setSyncBusy("pull");
+    setSyncMsg(null);
+    try {
+      const token = await getGoogleAccessToken();
+      const data = await invoke<number[]>("drive_download_appdata", {
+        accessToken: token,
+        name: SYNC_DRIVE_FILE,
+      });
+      await invoke("import_sync_data", { password: pass, data });
+      window.alert("Berhasil dipulihkan dari Google Drive. Aplikasi akan dimuat ulang.");
+      await relaunch();
+    } catch (err) {
+      setSyncMsg({ ok: false, text: `Gagal pull: ${err}` });
+      setSyncBusy(null);
+    }
+  };
 
   return (
     <div className="max-w-3xl">
@@ -1294,44 +1342,26 @@ function ConfigSyncSection() {
           </p>
           <div className="flex gap-4">
             <button
-              onClick={async () => {
-                try {
-                  const pass = window.prompt("Masukkan/Buat Master Password untuk enkripsi:");
-                  if (!pass) return;
-                  const code = await invoke<string>("start_google_login");
-                  await invoke<{ access_token: string }>("exchange_google_token", { code });
-                  alert("Login Google berhasil!");
-                  const payload = await invoke<number[]>("export_sync_data", { password: pass });
-                  // Simulate uploading payload to Drive using token
-                  alert(`Berhasil mengamankan & mengenkripsi ${payload.length} bytes data untuk diunggah!`);
-                } catch (err: any) {
-                  alert("Gagal sinkronisasi: " + err);
-                }
-              }}
-              className="rounded bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-500"
+              onClick={doPush}
+              disabled={syncBusy !== null}
+              className="rounded bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Push ke Google Drive
+              {syncBusy === "push" ? "Mengunggah…" : "Push ke Google Drive"}
             </button>
             <button
-              onClick={async () => {
-                try {
-                  const pass = window.prompt("Masukkan Master Password untuk dekripsi:");
-                  if (!pass) return;
-                  const code = await invoke<string>("start_google_login");
-                  await invoke<{ access_token: string }>("exchange_google_token", { code });
-                  alert("Login Google berhasil! Mengunduh...");
-                  // Simulate fetching payload from Drive and calling import_sync_data
-                  alert("Fitur unduh mock berhasil, memuat ulang...");
-                } catch (err: any) {
-                  alert("Gagal memulihkan: " + err);
-                }
-              }}
-              className="rounded border px-4 py-2 text-sm font-medium transition hover:bg-black/10"
+              onClick={doPull}
+              disabled={syncBusy !== null}
+              className="rounded border px-4 py-2 text-sm font-medium transition hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-60"
               style={{ borderColor: "var(--m-border)", color: "var(--m-text)" }}
             >
-              Pull dari Google Drive
+              {syncBusy === "pull" ? "Mengunduh…" : "Pull dari Google Drive"}
             </button>
           </div>
+          {syncMsg && (
+            <p className="text-sm" style={{ color: syncMsg.ok ? "#22c55e" : "#ef4444" }}>
+              {syncMsg.text}
+            </p>
+          )}
         </div>
       ) : (
         <div>
@@ -1682,20 +1712,127 @@ function Placeholder({ title }: { title: string }) {
   );
 }
 
+type GoogleAccount = {
+  email: string;
+  name?: string;
+  picture?: string;
+  accessToken: string;
+  refreshToken?: string;
+  signedInAt: number;
+};
+
+const GOOGLE_ACCOUNT_KEY = "googleAccount";
+
+/** Full interactive Google sign-in; persists the account and returns it. */
+async function googleInteractiveLogin(): Promise<GoogleAccount> {
+  const code = await invoke<string>("start_google_login");
+  const token = await invoke<{ access_token: string; refresh_token?: string }>(
+    "exchange_google_token",
+    { code },
+  );
+  const user = await invoke<{ email: string; name?: string; picture?: string }>(
+    "google_user_info",
+    { accessToken: token.access_token },
+  );
+  const acc: GoogleAccount = {
+    ...user,
+    accessToken: token.access_token,
+    refreshToken: token.refresh_token,
+    signedInAt: Date.now(),
+  };
+  await setValue(GOOGLE_ACCOUNT_KEY, acc);
+  return acc;
+}
+
+/** Access token for Drive sync: silently refresh the stored session when
+ *  possible, fall back to the interactive browser login otherwise. */
+async function getGoogleAccessToken(): Promise<string> {
+  let acc: GoogleAccount | null = null;
+  try {
+    const store = await getStore();
+    acc = (await store.get<GoogleAccount>(GOOGLE_ACCOUNT_KEY)) ?? null;
+  } catch {
+    // no store (plain browser) — fall through to interactive login
+  }
+  if (acc?.refreshToken) {
+    try {
+      const token = await invoke<{ access_token: string; refresh_token?: string }>(
+        "google_refresh_token",
+        { refreshToken: acc.refreshToken },
+      );
+      const updated: GoogleAccount = {
+        ...acc,
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token ?? acc.refreshToken,
+      };
+      await setValue(GOOGLE_ACCOUNT_KEY, updated);
+      return updated.accessToken;
+    } catch {
+      // refresh token revoked/expired — fall back to interactive login
+    }
+  }
+  return (await googleInteractiveLogin()).accessToken;
+}
+
+const SYNC_DRIVE_FILE = "moorix-sync.bin";
+
 function AccountSection() {
-  const [googleStatus, setGoogleStatus] = useState<
-    { state: "idle" } | { state: "loading" } | { state: "signed-in" } | { state: "error"; message: string }
-  >({ state: "idle" });
+  const [account, setAccount] = useState<GoogleAccount | null>(null);
+  const [busy, setBusy] = useState<"login" | "logout" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Restore the signed-in account persisted in the store (moorix.json).
+  useEffect(() => {
+    (async () => {
+      try {
+        const store = await getStore();
+        const saved = await store.get<GoogleAccount>(GOOGLE_ACCOUNT_KEY);
+        if (saved && saved.email) setAccount(saved);
+      } catch {
+        // Not in a Tauri runtime — stay signed out.
+      }
+    })();
+  }, []);
 
   const doGoogleLogin = async () => {
-    if (googleStatus.state === "loading") return;
-    setGoogleStatus({ state: "loading" });
+    if (busy) return;
+    setBusy("login");
+    setError(null);
     try {
       const code = await invoke<string>("start_google_login");
-      await invoke<{ access_token: string }>("exchange_google_token", { code });
-      setGoogleStatus({ state: "signed-in" });
+      const token = await invoke<{ access_token: string; refresh_token?: string }>(
+        "exchange_google_token",
+        { code },
+      );
+      const user = await invoke<{ email: string; name?: string; picture?: string }>(
+        "google_user_info",
+        { accessToken: token.access_token },
+      );
+      const acc: GoogleAccount = {
+        ...user,
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token,
+        signedInAt: Date.now(),
+      };
+      await setValue(GOOGLE_ACCOUNT_KEY, acc);
+      setAccount(acc);
     } catch (err) {
-      setGoogleStatus({ state: "error", message: String(err) });
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doLogout = async () => {
+    if (!account || busy) return;
+    setBusy("logout");
+    try {
+      // Best-effort revoke (revoking the refresh token also kills its access tokens).
+      await invoke("google_logout", { token: account.refreshToken ?? account.accessToken }).catch(() => {});
+      await setValue(GOOGLE_ACCOUNT_KEY, null).catch(() => {});
+    } finally {
+      setAccount(null);
+      setBusy(null);
     }
   };
 
@@ -1708,10 +1845,54 @@ function AccountSection() {
         Login to sync your settings across devices.
       </p>
 
+      {account ? (
+        <div className="flex flex-col gap-4 max-w-sm">
+          <div
+            className="flex items-center gap-3 rounded-md border p-4"
+            style={{ borderColor: "var(--m-border)", background: "var(--m-panel)" }}
+          >
+            {account.picture ? (
+              <img
+                src={account.picture}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="h-12 w-12 shrink-0 rounded-full"
+              />
+            ) : (
+              <div
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-white"
+                style={{ background: "#06b6d4" }}
+              >
+                {(account.name ?? account.email).charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium" style={{ color: "var(--m-text)" }}>
+                {account.name ?? account.email}
+              </div>
+              <div className="truncate text-xs" style={{ color: "var(--m-muted)" }}>
+                {account.email}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px]" style={{ color: "#22c55e" }}>
+                <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#22c55e" }} />
+                Signed in with Google
+              </div>
+            </div>
+          </div>
+          <button
+            className="rounded-md border px-4 py-2 text-sm font-medium transition hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ borderColor: "var(--m-border)", color: "#ef4444" }}
+            disabled={busy !== null}
+            onClick={doLogout}
+          >
+            {busy === "logout" ? "Logging out…" : "Log out"}
+          </button>
+        </div>
+      ) : (
       <div className="flex flex-col gap-4 max-w-sm">
         <button
           className="flex items-center justify-center gap-3 rounded-md bg-white border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={googleStatus.state === "loading"}
+          disabled={busy !== null}
           onClick={doGoogleLogin}
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -1720,17 +1901,12 @@ function AccountSection() {
             <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
           </svg>
-          {googleStatus.state === "loading" ? "Menunggu login di browser…" : "Sign in with Google"}
+          {busy === "login" ? "Menunggu login di browser…" : "Sign in with Google"}
         </button>
 
-        {googleStatus.state === "signed-in" && (
-          <p className="text-sm" style={{ color: "#22c55e" }}>
-            Login Google berhasil.
-          </p>
-        )}
-        {googleStatus.state === "error" && (
+        {error && (
           <p className="text-sm" style={{ color: "#ef4444" }}>
-            Gagal login: {googleStatus.message}
+            Gagal login: {error}
           </p>
         )}
 
@@ -1746,6 +1922,7 @@ function AccountSection() {
         </button>
         */}
       </div>
+      )}
     </div>
   );
 }

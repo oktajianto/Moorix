@@ -22,13 +22,23 @@ struct SyncPayload {
 
 pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let store_path = app_data_dir.join("store.json");
+    let store_path = app_data_dir.join("moorix.json");
 
-    let store_json = if store_path.exists() {
+    let mut store_json = if store_path.exists() {
         fs::read_to_string(&store_path).map_err(|e| e.to_string())?
     } else {
         "{}".to_string()
     };
+
+    // Google tokens are per-device: strip them from the synced payload so a
+    // pull on another machine never overwrites (or leaks) a session.
+    if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&store_json) {
+        if let Some(obj) = parsed.as_object_mut() {
+            if obj.remove("googleAccount").is_some() {
+                store_json = serde_json::to_string(&parsed).map_err(|e| e.to_string())?;
+            }
+        }
+    }
 
     let mut secrets_map = HashMap::new();
 
@@ -57,12 +67,29 @@ pub fn apply_sync_payload(app: &AppHandle, payload_json: &str) -> Result<(), Str
     let payload: SyncPayload = serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let store_path = app_data_dir.join("store.json");
+    let store_path = app_data_dir.join("moorix.json");
+
+    // The payload has googleAccount stripped (see get_sync_payload); carry the
+    // local sign-in over so pulling a backup doesn't log this device out.
+    let mut incoming: serde_json::Value =
+        serde_json::from_str(&payload.store_json).map_err(|e| e.to_string())?;
+    if let Ok(existing_raw) = fs::read_to_string(&store_path) {
+        if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_raw) {
+            if let Some(acc) = existing.get("googleAccount") {
+                if !acc.is_null() {
+                    if let Some(obj) = incoming.as_object_mut() {
+                        obj.entry("googleAccount").or_insert_with(|| acc.clone());
+                    }
+                }
+            }
+        }
+    }
+    let merged = serde_json::to_string(&incoming).map_err(|e| e.to_string())?;
 
     if let Some(parent) = store_path.parent() {
         fs::create_dir_all(parent).ok();
     }
-    fs::write(&store_path, payload.store_json).map_err(|e| e.to_string())?;
+    fs::write(&store_path, merged).map_err(|e| e.to_string())?;
 
     #[cfg(desktop)]
     for (id, secret) in payload.secrets {

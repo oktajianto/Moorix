@@ -3,7 +3,7 @@
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
 > Satu codebase yang menjangkau desktop **dan** mobile.
 
-Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-15
+Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-18
 
 ---
 
@@ -22,8 +22,10 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-15
 | 7B | Android build → **signed release APK** | ✅ |
 | 8 | Serial (desktop) + Telnet transports | ✅ |
 | 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (Remote -R, SFTP, sync, jump host: ⬜) |
-| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ⬜) |
+| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ✅ — terakhir `v0.1.0-pre.7`) |
 | 11 | **SFTP file manager** (dual-pane lokal/remote, upload/download rekursif, DnD, ops remote) | ✅ T1 backend · T2 panel+navigasi · T3 transfer rekursif+progress+cancel · T4 drag-and-drop (in-app + OS drop) · T5 ops mkdir/rename/delete + menu klik-kanan |
+| 16 | **Google login (OAuth)** di Account & Sync + OAuth app **In production** + CI secret wiring + rilis `v0.1.0-pre.7` | ✅ |
+| 17 | **Google Drive sync nyata** (Push/Pull terenkripsi ke appDataFolder, refresh token silent) + **Account UI** (kartu profil + logout) + README global | ✅ |
 
 > Detail per fase ada di **§16 Progress Log**. Kolom "Status" di-update tiap fase (jangan dihapus).
 
@@ -33,12 +35,12 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-15
 
 ### 🔴 Wajib — urutan disarankan
 1. **Lengkapi file kunci lokal** (§0B) — restore dari repo `all_key_mine` **sebelum** build rilis desktop/Android.
-2. **Publikasikan GitHub Release ber-signing** → mengaktifkan **auto-updater** (Fase 10). Prasyarat: 2 secret repo (`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), **bump versi** di `package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml` (+ `Cargo.lock`), lalu `git tag vX && git push origin vX`. Tanpa rilis + `latest.json`, updater tak berfungsi.
+2. ~~**Publikasikan GitHub Release ber-signing**~~ ✅ **SELESAI** (terakhir `v0.1.0-pre.7`, 2026-07-18 — lihat Fase 16). Prosedur rilis: bump versi di 4 file (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `Cargo.lock`), lalu `git tag vX && git push origin vX`. Secret repo kini **3**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `MOORIX_GOOGLE_CLIENT_SECRET`.
 3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
 4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.
 
 ### 🟡 Opsional — nilai tambah
-- **Config sync**: bangun **server sync** minimal (REST/E2E) agar UI Config sync benar-benar hidup (kini UI + persist saja).
+- ~~**Config sync**: bangun server sync minimal~~ ✅ **SELESAI via Google Drive** (Fase 17) — Push/Pull E2E-encrypted ke appDataFolder; tanpa server sendiri.
 - **SFTP**: lebar panel **persist antar-restart**, **preview file**, **checksum/verify** transfer, progres byte per-file (kini per-file by name/index), simbol link ikon khusus.
 - **Store-only settings** (UI ada, belum berpengaruh runtime): **Sixel** (butuh `@xterm/addon-image`), **Word separators** (custom double-click selection), **Copy with formatting** (rich clipboard), **Bracketed paste**, **Require key to click links** (butuh `@xterm/addon-web-links`).
 - **Terminal**: ligatures **live** (kini hanya terminal baru), renderer switch **live** (kini saat create).
@@ -63,6 +65,7 @@ File yang harus ada setelah copy:
 | `src-tauri/updater-signing.key` | private key minisign (updater) | sign artefak auto-update |
 | `src-tauri/gen/android/moorix-release.jks` | keystore Android | build APK **release** ber-signing |
 | `src-tauri/gen/android/keystore.properties` | kredensial keystore (path/alias/password) | build APK release |
+| `src-tauri/.cargo/config.toml` | `[env] MOORIX_GOOGLE_CLIENT_SECRET` (OAuth client secret Google) | build lokal dengan Google login berfungsi (CI pakai repo secret) |
 
 > Catatan: file `*.pub` (mis. `src-tauri/updater-signing.key.pub`) **aman & sudah di-commit** — tidak perlu di-restore. **Jangan** meng-commit file pada tabel di atas (sudah diabaikan `.gitignore`); backup hanya via repo privat `all_key_mine`. Kehilangan `updater-signing.key`/password = tak bisa rilis update; kehilangan `.jks`/password = tak bisa update APK Android.
 
@@ -657,6 +660,25 @@ Setelah plan ini disetujui:
   - Setting baru: `showBuiltinProfiles`, `recentProfilesCount`, `recentProfiles`.
   - **Bonus**: subtitle/badge palette diperbaiki per-tipe (Serial `path·baud`, Telnet `host:port`) — sebelumnya selalu asumsi SSH.
 - ✅ Verifikasi: `tsc` lolos + `cargo check` lolos (12s). ⚠️ **Belum diuji runtime** — Smart App Control (WDAC) memblokir exe hasil build baru saat di-spawn tool saya (`os error 4551`), jadi app perlu dijalankan ulang `pnpm tauri dev` dari terminal user.
+
+### Fase 16 — Google login + polish SFTP + rilis `v0.1.0-pre.7` ✅ (2026-07-18)
+- ✅ **SFTP context menu flip** (`SftpPanel.tsx`): menu klik-kanan kini diukur via `useLayoutEffect` (render hidden → ukur → posisikan) dan **flip ke atas/kiri** bila melewati tepi viewport (pad 4px) — sebelumnya terpotong saat klik item di bagian bawah panel.
+- ✅ **Sign in with Google fungsional** (`SettingsPage.tsx` → `AccountSection`): tombol dulu hanya `console.log`; kini memanggil `start_google_login` → `exchange_google_token` (`cloud_auth.rs`), dengan state loading (tombol disabled, "Menunggu login di browser…") + hasil inline (hijau sukses / merah pesan error). **Tombol Apple di-comment** (disembunyikan sampai flow-nya siap).
+- ✅ **Client secret keluar dari kode**: `CLIENT_SECRET` di `cloud_auth.rs` kini `option_env!("MOORIX_GOOGLE_CLIENT_SECRET")` (compile-time). Lokal: `src-tauri/.cargo/config.toml` `[env]` — **gitignored** (masuk daftar §0B konsep-nya; nilai = client secret OAuth "Moorix Client"). CI: repo secret `MOORIX_GOOGLE_CLIENT_SECRET` diteruskan di `release.yml` + `build-windows.yml`. Latar: push sempat diblokir **GitHub push protection** karena secret ter-hardcode; commit dibuat ulang tanpa secret.
+- ✅ **Google Cloud Console** (project `Moorix Sync`, client Desktop `716246034426-…`): status OAuth **Testing → In production** (scope `drive.appdata` = non-sensitive, tanpa verifikasi Google); test user tak dibutuhkan lagi; branding tanpa logo (verifikasi branding di-skip dulu). Login end-to-end diuji sukses.
+- ✅ **Rilis `v0.1.0-pre.7`**: bump versi 4 file + tag. Run pertama **gagal** — `Resource not accessible by integration` saat create release: setting repo **Actions → Workflow permissions ternyata `read`** → diubah ke **`write`** via `gh api` (ini juga fix permanen). Tag dipindah ke commit berisi CI fix, run kedua **sukses 4 platform** + `latest.json` + semua `.sig` → auto-update dari pre.6 tetap jalan (kunci signing sama, semver pre.7 > pre.6).
+- 🔧 **Tooling**: GitHub CLI (`gh`) di-install via winget + auth sebagai `oktajianto` — dipakai untuk repo secret, inspeksi run, dan API setting.
+- ✅ ~~Lanjutan sync~~ → dikerjakan di Fase 17.
+
+### Fase 17 — Google Drive sync nyata + Account UI + README global ✅ (2026-07-18)
+- ✅ **Account & Sync UI** (`SettingsPage.tsx` → `AccountSection`): akun Google **dipersist** di store (`moorix.json` key `googleAccount`: email/name/picture + access & refresh token) → restore saat mount; kartu profil (avatar / inisial fallback, nama, email, indikator "Signed in") + tombol **Log out** (revoke token best-effort via `google_logout` + hapus store). Scope OAuth ditambah `openid email profile`; command baru `google_user_info` (userinfo endpoint).
+- ✅ **Callback browser dirapikan** (`cloud_auth.rs`): response kini ber-`Content-Type: text/html` (sebelumnya tampil HTML mentah) + halaman sukses ber-style gelap.
+- ✅ **Drive sync nyata** (menggantikan mock di Config sync):
+  - Backend: `google_refresh_token` (silent re-auth), `drive_upload_appdata` (create multipart / overwrite media ke **appDataFolder**, file `moorix-sync.bin`), `drive_download_appdata`. reqwest 0.13 perlu feature **`query`**.
+  - **Bugfix penting** (`sync.rs`): payload membaca `store.json` yang **tidak pernah ada** → diganti `moorix.json` (payload selama ini kosong!). `googleAccount` **di-strip dari payload** (token per-perangkat; pull tidak menimpa/membocorkan sesi) dan di-merge balik saat apply.
+  - Frontend: Push = password → `export_sync_data` (AES-GCM) → upload (pesan ukuran backup); Pull = password → **confirm timpa** → download → `import_sync_data` → **`relaunch()`** (hindari store in-memory menimpa hasil pull). Tombol busy-state; error inline. Silent auth: refresh token → fallback login interaktif.
+- ✅ **README**: bagian atas ditulis ulang **bahasa Inggris** (audiens global) — tagline "hosting/VPS/cloud management, SSH + SFTP satu jendela", screenshot `moorix-layout-sample.png` (baru, root repo), 7 poin "Why Moorix?", CTA unduh ke Releases; Tech stack ke bawah tetap Indonesia.
+- ✅ Verifikasi: `tsc` + `cargo check` lolos; app dev auto-rebuild & jalan.
 
 ---
 

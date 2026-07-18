@@ -82,6 +82,11 @@ pub fn run() {
             sync::import_sync_data,
             cloud_auth::start_google_login,
             cloud_auth::exchange_google_token,
+            cloud_auth::google_user_info,
+            cloud_auth::google_logout,
+            cloud_auth::google_refresh_token,
+            cloud_auth::drive_upload_appdata,
+            cloud_auth::drive_download_appdata,
             open_devtools,
         ])
         .run(tauri::generate_context!())
