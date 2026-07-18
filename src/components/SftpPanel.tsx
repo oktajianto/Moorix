@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
@@ -128,6 +128,32 @@ export function SftpPanel({
     x: number;
     y: number;
   } | null>(null);
+
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Keep the context menu inside the viewport: if it would overflow the
+  // bottom or right edge, flip it above/left of the cursor so it stays
+  // fully visible.
+  useLayoutEffect(() => {
+    if (!menu) {
+      setMenuPos(null);
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 4;
+    let x = menu.x;
+    let y = menu.y;
+    if (y + rect.height > window.innerHeight - pad) {
+      y = Math.max(pad, menu.y - rect.height);
+    }
+    if (x + rect.width > window.innerWidth - pad) {
+      x = Math.max(pad, menu.x - rect.width);
+    }
+    setMenuPos({ x, y });
+  }, [menu]);
 
   const [preview, setPreview] = useState<{ path: string; name: string; isLocal: boolean } | null>(null);
   const [checksum, setChecksum] = useState<{ name: string; hash: string | null; error?: string } | null>(null);
@@ -608,8 +634,15 @@ export function SftpPanel({
             }}
           />
           <div
+            ref={menuRef}
             className="fixed z-50 min-w-36 rounded-md border py-1 shadow-xl"
-            style={{ left: menu.x, top: menu.y, background: "var(--m-panel)", borderColor: "var(--m-border)" }}
+            style={{
+              left: (menuPos ?? menu).x,
+              top: (menuPos ?? menu).y,
+              visibility: menuPos ? "visible" : "hidden",
+              background: "var(--m-panel)",
+              borderColor: "var(--m-border)",
+            }}
           >
             {menu.name && (
               <>

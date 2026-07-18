@@ -11,7 +11,12 @@ pub struct OAuthToken {
 }
 
 const CLIENT_ID: &str = "716246034426-2pcvgll31hkeao5h1a69f8d39jllm8d5.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = ""; // Silakan diisi dengan rahasia milik Anda jika diperlukan
+// Supplied at build time via the MOORIX_GOOGLE_CLIENT_SECRET env var
+// (set locally in src-tauri/.cargo/config.toml, which is gitignored).
+const CLIENT_SECRET: &str = match option_env!("MOORIX_GOOGLE_CLIENT_SECRET") {
+    Some(s) => s,
+    None => "",
+};
 const REDIRECT_URI: &str = "http://127.0.0.1:8484/callback";
 
 #[tauri::command]
