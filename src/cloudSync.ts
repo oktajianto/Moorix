@@ -173,6 +173,26 @@ export async function autoPush(): Promise<void> {
   if (!pw) return;
   const token = await getAccessToken();
   if (!token) return;
+
+  // Safety valve: never overwrite an existing backup with an empty local
+  // config. A device that somehow has no profiles (e.g. a failed import, or a
+  // fresh device that enabled sync before pulling) must not wipe the shared
+  // backup — this is exactly what made synced profiles vanish.
+  try {
+    const store = await getStore();
+    const profiles = (await store.get<unknown[]>("userProfiles")) ?? [];
+    if (profiles.length === 0) {
+      const remote = await invoke<string | null>("drive_appdata_modified", {
+        accessToken: token,
+        name: SYNC_DRIVE_FILE,
+      });
+      if (remote) return; // a backup already exists — don't clobber it with nothing
+    }
+  } catch {
+    // if we can't determine local/remote state, skip this push to be safe
+    return;
+  }
+
   try {
     const payload = await invoke<number[]>("export_sync_data", { password: pw });
     await invoke<string>("drive_upload_appdata", {
