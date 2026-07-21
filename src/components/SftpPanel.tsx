@@ -92,6 +92,14 @@ const fmtSize = (n: number): string => {
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
 };
 
+/** Format a Unix mtime (seconds) as a compact "YYYY-MM-DD HH:mm". */
+const fmtDate = (secs: number): string => {
+  if (!secs) return "";
+  const d = new Date(secs * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
 /**
  * SFTP file manager panel: local filesystem (top) and the remote VPS (bottom),
  * both browsable. Transfers and remote operations arrive in later stages.
@@ -1019,11 +1027,19 @@ function FileHalf({
             >
               <EntryIcon entry={e} />
               <span className="min-w-0 flex-1 truncate">{e.name}</span>
-              {!e.isDir && (
-                <span className="shrink-0 text-[10px]" style={{ color: "var(--m-muted)" }}>
-                  {fmtSize(e.size)}
-                </span>
-              )}
+              <span
+                className="shrink-0 text-right text-[10px] tabular-nums"
+                style={{ color: "var(--m-muted)" }}
+                title={e.mtime ? fmtDate(e.mtime) : undefined}
+              >
+                {fmtDate(e.mtime)}
+              </span>
+              <span
+                className="w-12 shrink-0 text-right text-[10px] tabular-nums"
+                style={{ color: "var(--m-muted)" }}
+              >
+                {e.isDir ? "" : fmtSize(e.size)}
+              </span>
             </button>
           ))
         )}

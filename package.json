@@ -1,7 +1,7 @@
 {
   "name": "moorix",
   "private": true,
-  "version": "0.1.0-pre.8",
+  "version": "0.1.0-pre.9",
   "type": "module",
   "license": "UNLICENSED",
   "scripts": {
