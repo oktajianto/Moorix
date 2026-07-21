@@ -8,6 +8,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_store::StoreExt;
 
 #[derive(Serialize, Deserialize)]
 struct Profile {
@@ -67,31 +68,24 @@ pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
 
 pub fn apply_sync_payload(app: &AppHandle, payload_json: &str) -> Result<(), String> {
     let payload: SyncPayload = serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
-
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let store_path = app_data_dir.join("moorix.json");
-
-    // The payload has googleAccount stripped (see get_sync_payload); carry the
-    // local sign-in over so pulling a backup doesn't log this device out.
-    let mut incoming: serde_json::Value =
+    let incoming: serde_json::Value =
         serde_json::from_str(&payload.store_json).map_err(|e| e.to_string())?;
-    if let Ok(existing_raw) = fs::read_to_string(&store_path) {
-        if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_raw) {
-            if let Some(acc) = existing.get("googleAccount") {
-                if !acc.is_null() {
-                    if let Some(obj) = incoming.as_object_mut() {
-                        obj.entry("googleAccount").or_insert_with(|| acc.clone());
-                    }
-                }
+
+    // Apply the imported config THROUGH the store plugin, not a raw file write.
+    // The plugin keeps moorix.json cached in memory; writing the file behind its
+    // back lets that stale cache clobber the import on the next save/relaunch
+    // (which is exactly why pulled profiles vanished). googleAccount is stripped
+    // from the payload, so skipping it leaves this device's sign-in intact.
+    let store = app.store("moorix.json").map_err(|e| e.to_string())?;
+    if let Some(obj) = incoming.as_object() {
+        for (key, value) in obj {
+            if key == "googleAccount" {
+                continue;
             }
+            store.set(key.clone(), value.clone());
         }
     }
-    let merged = serde_json::to_string(&incoming).map_err(|e| e.to_string())?;
-
-    if let Some(parent) = store_path.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&store_path, merged).map_err(|e| e.to_string())?;
+    store.save().map_err(|e| e.to_string())?;
 
     #[cfg(desktop)]
     for (id, secret) in payload.secrets {

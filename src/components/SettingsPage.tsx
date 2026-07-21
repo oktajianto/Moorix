@@ -1330,6 +1330,9 @@ function ConfigSyncSection() {
     try {
       await setSyncPassword(pass);
       update({ autoSync: true });
+      // Persist the flag to the store now (the provider's write is debounced) so
+      // the seeded backup actually contains autoSync=true.
+      await setValue("settings", { ...settings, autoSync: true });
       // Seed the backup now so other devices have something to pull.
       await seedPush(pass);
       setSyncMsg({ ok: true, text: "Auto-sync aktif. Setup terunggah ke Google Drive — login akun sama di perangkat lain untuk menariknya otomatis." });
