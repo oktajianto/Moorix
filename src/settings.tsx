@@ -8,6 +8,7 @@ import {
 } from "react";
 import { DEFAULT_THEME } from "./themes";
 import { getStore, setValue } from "./store";
+import { scheduleAutoPush } from "./cloudSync";
 
 export type CursorShape = "block" | "bar" | "underline";
 export type RendererType = "webgl" | "dom";
@@ -63,6 +64,8 @@ export type Settings = {
   syncHotkeys: boolean;
   syncWindow: boolean;
   syncVault: boolean;
+  // Auto-sync via Google Drive: pull on login/startup, push on change.
+  autoSync: boolean;
   // SFTP
   sftpWidth: number;
   // Window
@@ -121,6 +124,7 @@ export const DEFAULT_SETTINGS: Settings = {
   syncHotkeys: true,
   syncWindow: true,
   syncVault: true,
+  autoSync: false,
   sftpWidth: 440,
   windowFrame: "custom",
   alwaysOnTop: false,
@@ -203,6 +207,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void setValue(STORE_KEY, settings).catch(() => {});
+      scheduleAutoPush();
     }, 300);
   }, [settings]);
 

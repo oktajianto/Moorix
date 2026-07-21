@@ -37,6 +37,7 @@ import {
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getStore, setValue } from "../store";
+import { setSyncPassword, seedPush, pullOnLogin } from "../cloudSync";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import logo from "../assets/moorix-logo.png";
@@ -1316,6 +1317,34 @@ function ConfigSyncSection() {
     }
   };
 
+  const enableAutoSync = async () => {
+    const pass = window.prompt("Buat Master Password sinkronisasi (untuk enkripsi backup):");
+    if (!pass) return;
+    const confirm = window.prompt("Ulangi Master Password:");
+    if (confirm !== pass) {
+      setSyncMsg({ ok: false, text: "Password tidak cocok." });
+      return;
+    }
+    setSyncBusy("push");
+    setSyncMsg(null);
+    try {
+      await setSyncPassword(pass);
+      update({ autoSync: true });
+      // Seed the backup now so other devices have something to pull.
+      await seedPush(pass);
+      setSyncMsg({ ok: true, text: "Auto-sync aktif. Setup terunggah ke Google Drive — login akun sama di perangkat lain untuk menariknya otomatis." });
+    } catch (err) {
+      setSyncMsg({ ok: false, text: `Auto-sync aktif, tapi unggah awal gagal: ${err}. Pastikan sudah login Google.` });
+    } finally {
+      setSyncBusy(null);
+    }
+  };
+
+  const disableAutoSync = () => {
+    update({ autoSync: false });
+    setSyncMsg({ ok: true, text: "Auto-sync dimatikan. Sinkronisasi manual (Push/Pull) tetap bisa dipakai." });
+  };
+
   return (
     <div className="max-w-3xl">
       <h1 className="text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Config sync</h1>
@@ -1340,6 +1369,34 @@ function ConfigSyncSection() {
           <p className="text-sm" style={{ color: "var(--m-muted)" }}>
             Sinkronkan konfigurasi (Store JSON) dan rahasia Vault (Keychain) Anda dengan aman melalui Google Drive (terenkripsi End-to-End).
           </p>
+
+          <div
+            className="flex items-start justify-between gap-4 rounded-md border p-4"
+            style={{ borderColor: "var(--m-border)", background: "var(--m-panel)" }}
+          >
+            <div className="min-w-0">
+              <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>
+                Auto-sync
+              </div>
+              <p className="mt-1 text-xs" style={{ color: "var(--m-muted)" }}>
+                Otomatis <b>tarik</b> setup saat login/buka aplikasi di perangkat lain, dan
+                otomatis <b>unggah</b> setiap ada perubahan. Butuh login Google + Master Password
+                (disimpan aman di keychain perangkat ini).
+              </p>
+            </div>
+            <button
+              onClick={() => (settings.autoSync ? disableAutoSync() : void enableAutoSync())}
+              disabled={syncBusy !== null}
+              className="mt-0.5 shrink-0 rounded-full px-3 py-1 text-xs font-medium transition disabled:opacity-60"
+              style={{
+                background: settings.autoSync ? "#22c55e" : "var(--m-input)",
+                color: settings.autoSync ? "#fff" : "var(--m-text)",
+              }}
+            >
+              {settings.autoSync ? "Aktif — matikan" : "Aktifkan"}
+            </button>
+          </div>
+
           <div className="flex gap-4">
             <button
               onClick={doPush}
@@ -1816,6 +1873,15 @@ function AccountSection() {
       };
       await setValue(GOOGLE_ACCOUNT_KEY, acc);
       setAccount(acc);
+      // If this account already has a backup (e.g. from another computer), offer
+      // to pull it now. On success the app imports it and relaunches.
+      await pullOnLogin(
+        () =>
+          window.confirm(
+            "Ditemukan backup Moorix di akun Google ini. Tarik setup (profil SSH, konfigurasi) ke perangkat ini sekarang? Konfigurasi lokal akan ditimpa.",
+          ),
+        () => window.prompt("Masukkan Master Password sinkronisasi:"),
+      );
     } catch (err) {
       setError(String(err));
     } finally {

@@ -67,6 +67,7 @@ const profileLabel = (p: UserProfile) => {
   return "Unknown Profile";
 };
 import { getStore, setValue } from "./store";
+import { scheduleAutoPush } from "./cloudSync";
 
 type Tab =
   | { id: string; kind: "launcher" }
@@ -303,6 +304,7 @@ function App() {
   const persistProfiles = (list: UserProfile[]) => {
     setUserProfiles(list);
     void setValue("userProfiles", list).catch(() => {});
+    scheduleAutoPush();
   };
 
   const saveProfile = (p: UserProfile) => {
@@ -328,6 +330,7 @@ function App() {
   const setDefaultProfile = (id: string) => {
     setDefaultProfileId(id);
     void setValue("defaultProfileId", id).catch(() => {});
+    scheduleAutoPush();
   };
 
   const addGroup = (name: string) => {
@@ -335,12 +338,14 @@ function App() {
     const next = [...groups, name];
     setGroups(next);
     void setValue("profileGroups", next).catch(() => {});
+    scheduleAutoPush();
   };
 
   const deleteGroup = (name: string) => {
     const next = groups.filter((g) => g !== name);
     setGroups(next);
     void setValue("profileGroups", next).catch(() => {});
+    scheduleAutoPush();
     // Move any profiles in that group back to Ungrouped (don't delete them).
     if (userProfiles.some((p) => p.group === name)) {
       persistProfiles(

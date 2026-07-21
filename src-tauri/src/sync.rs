@@ -43,7 +43,9 @@ pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
     let mut secrets_map = HashMap::new();
 
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&store_json) {
-        if let Some(profiles) = parsed.get("profiles").and_then(|p| p.as_array()) {
+        // User SSH/Serial/Telnet profiles live under the "userProfiles" store
+        // key; their passwords are kept in the OS keychain (id = profile id).
+        if let Some(profiles) = parsed.get("userProfiles").and_then(|p| p.as_array()) {
             for p in profiles {
                 if let Some(id) = p.get("id").and_then(|id| id.as_str()) {
                     #[cfg(desktop)]

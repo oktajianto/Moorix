@@ -87,6 +87,7 @@ pub fn run() {
             cloud_auth::google_refresh_token,
             cloud_auth::drive_upload_appdata,
             cloud_auth::drive_download_appdata,
+            cloud_auth::drive_appdata_modified,
             open_devtools,
         ])
         .run(tauri::generate_context!())

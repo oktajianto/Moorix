@@ -188,6 +188,39 @@ async fn drive_find_file(
         .map(String::from))
 }
 
+/// The `modifiedTime` (RFC 3339) of `name` in appDataFolder, or None if the
+/// file doesn't exist. Used by auto-sync to detect when another device pushed a
+/// newer backup, without downloading the (encrypted) contents.
+#[tauri::command]
+pub async fn drive_appdata_modified(
+    access_token: String,
+    name: String,
+) -> Result<Option<String>, String> {
+    let client = Client::new();
+    let q = format!("name = '{}' and trashed = false", name.replace('\'', "\\'"));
+    let res = client
+        .get(DRIVE_FILES_URL)
+        .query(&[
+            ("spaces", "appDataFolder"),
+            ("q", q.as_str()),
+            ("fields", "files(id,modifiedTime)"),
+            ("pageSize", "1"),
+        ])
+        .bearer_auth(&access_token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(res.text().await.unwrap_or_default());
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    Ok(v["files"]
+        .as_array()
+        .and_then(|files| files.first())
+        .and_then(|f| f["modifiedTime"].as_str())
+        .map(String::from))
+}
+
 /// Create or overwrite `name` in appDataFolder with `data`. Returns the file id.
 #[tauri::command]
 pub async fn drive_upload_appdata(
