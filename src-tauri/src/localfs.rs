@@ -91,6 +91,32 @@ pub fn local_preview(path: String) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+/// Read a local text file *in full* for editing. Mirrors `sftp_read_text`:
+/// refuses files over the hard cap, binary files (NUL byte), and non-UTF-8
+/// content. Distinct from `local_preview`, which is truncated.
+#[tauri::command]
+pub fn local_read_text(path: String) -> Result<String, String> {
+    let md = fs::metadata(&path).map_err(|e| e.to_string())?;
+    if md.len() > crate::sftp::EDIT_HARD_CAP {
+        return Err(format!(
+            "File too large to edit ({} bytes; max {} bytes).",
+            md.len(),
+            crate::sftp::EDIT_HARD_CAP
+        ));
+    }
+    let buf = fs::read(&path).map_err(|e| e.to_string())?;
+    if buf.contains(&0) {
+        return Err("Binary file — cannot edit as text.".to_string());
+    }
+    String::from_utf8(buf).map_err(|_| "File is not valid UTF-8 text.".to_string())
+}
+
+/// Overwrite a local file with `content` (UTF-8).
+#[tauri::command]
+pub fn local_write(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())
+}
+
 /// SHA-256 (hex) of a local file, streamed so large files don't buffer.
 #[tauri::command]
 pub fn local_checksum(path: String) -> Result<String, String> {

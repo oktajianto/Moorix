@@ -4,6 +4,7 @@ import App from "./App";
 import { SettingsProvider } from "./settings";
 import { ToastProvider } from "./components/Toast";
 import { maybeAutoPull } from "./cloudSync";
+import "./monaco"; // configure Monaco to load locally (offline-safe) before any editor mounts
 import "./index.css";
 
 function mount() {

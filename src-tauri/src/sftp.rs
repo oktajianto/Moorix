@@ -206,6 +206,77 @@ pub async fn sftp_preview(
     Ok(buf)
 }
 
+/// Hard ceiling for in-app text editing. Files larger than this are refused
+/// outright (Monaco freezes on very large buffers). The frontend applies a
+/// softer 1MB threshold that merely warns and asks before loading.
+pub const EDIT_HARD_CAP: u64 = 10 * 1024 * 1024;
+
+/// Read a remote text file *in full* for editing. Refuses files over the hard
+/// cap, binary files (contain a NUL byte), and non-UTF-8 content — so saving
+/// can round-trip the bytes exactly. Distinct from `sftp_preview`, which is
+/// truncated and must never be used as an edit source.
+#[tauri::command]
+pub async fn sftp_read_text(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> Result<String, String> {
+    let sftp = state
+        .sftp(&sftp_id)
+        .ok_or_else(|| "sftp session not found".to_string())?;
+
+    let meta = sftp.metadata(path.clone()).await.map_err(|e| e.to_string())?;
+    let size = meta.size.unwrap_or(0);
+    if size > EDIT_HARD_CAP {
+        return Err(format!(
+            "File too large to edit ({} bytes; max {} bytes).",
+            size, EDIT_HARD_CAP
+        ));
+    }
+
+    let mut file = sftp.open(path).await.map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).await.map_err(|e| e.to_string())?;
+
+    if buf.contains(&0) {
+        return Err("Binary file — cannot edit as text.".to_string());
+    }
+    String::from_utf8(buf).map_err(|_| "File is not valid UTF-8 text.".to_string())
+}
+
+/// Overwrite a remote file with `content` (UTF-8). Truncates then writes, and
+/// verifies the resulting size matches so a partial write is surfaced.
+#[tauri::command]
+pub async fn sftp_write(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    let sftp = state
+        .sftp(&sftp_id)
+        .ok_or_else(|| "sftp session not found".to_string())?;
+
+    let bytes = content.into_bytes();
+    let mut file = sftp.create(path.clone()).await.map_err(|e| e.to_string())?;
+    file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    file.flush().await.ok();
+    file.shutdown().await.ok();
+
+    let meta = sftp
+        .metadata(path)
+        .await
+        .map_err(|e| format!("verify meta: {e}"))?;
+    if meta.size.unwrap_or(0) != bytes.len() as u64 {
+        return Err(format!(
+            "Save incomplete: expected {} bytes, got {}",
+            bytes.len(),
+            meta.size.unwrap_or(0)
+        ));
+    }
+    Ok(())
+}
+
 /// SHA-256 (hex) of a remote file, streamed so large files don't buffer.
 #[tauri::command]
 pub async fn sftp_checksum(

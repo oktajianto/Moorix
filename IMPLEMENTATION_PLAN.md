@@ -42,6 +42,8 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-18
 ### 🟡 Opsional — nilai tambah
 - ~~**Config sync**: bangun server sync minimal~~ ✅ **SELESAI via Google Drive** (Fase 17) — Push/Pull E2E-encrypted ke appDataFolder; tanpa server sendiri.
 - **SFTP**: lebar panel **persist antar-restart**, **preview file**, **checksum/verify** transfer, progres byte per-file (kini per-file by name/index), simbol link ikon khusus.
+- **Editor multi-file (minimize + tab + split view ala VS Code)** — ⬜ **RANCANGAN** (lihat Fase 19 di §16): editor jadi surface multi-dokumen, reuse logika `paneTree`, Monaco model per file. Menunggu 3 keputusan user.
+- **SFTP edit file in-app (Monaco)** — ✅ **SELESAI (kode)**, ⏳ uji E2E native (lihat Fase 18 di §16): buka file teks → edit di Monaco → Save tulis balik ke remote/lokal; soft-cap 1 MB (konfirmasi >1MB), hard-cap 10 MB, biner tetap read-only, auto-refresh listing setelah save.
 - **Store-only settings** (UI ada, belum berpengaruh runtime): **Sixel** (butuh `@xterm/addon-image`), **Word separators** (custom double-click selection), **Copy with formatting** (rich clipboard), **Bracketed paste**, **Require key to click links** (butuh `@xterm/addon-web-links`).
 - **Terminal**: ligatures **live** (kini hanya terminal baru), renderer switch **live** (kini saat create).
 - **Restore tabs**: pulihkan **layout split** (kini single-pane), dan urutan/tab aktif.
@@ -679,6 +681,73 @@ Setelah plan ini disetujui:
   - Frontend: Push = password → `export_sync_data` (AES-GCM) → upload (pesan ukuran backup); Pull = password → **confirm timpa** → download → `import_sync_data` → **`relaunch()`** (hindari store in-memory menimpa hasil pull). Tombol busy-state; error inline. Silent auth: refresh token → fallback login interaktif.
 - ✅ **README**: bagian atas ditulis ulang **bahasa Inggris** (audiens global) — tagline "hosting/VPS/cloud management, SSH + SFTP satu jendela", screenshot `moorix-layout-sample.png` (baru, root repo), 7 poin "Why Moorix?", CTA unduh ke Releases; Tech stack ke bawah tetap Indonesia.
 - ✅ Verifikasi: `tsc` + `cargo check` lolos; app dev auto-rebuild & jalan.
+
+### Fase 18 — SFTP: edit file in-app (Monaco) + save ke remote/lokal ✅ SELESAI (kode) · ⏳ E2E native window
+> **Progress bertahap:** ✅ Tahap 1 (backend) · ✅ Tahap 2 (setup Monaco lokal) · ✅ Tahap 3 (UI editor + save + auto-refresh)
+> Tujuan: file teks (`.txt`, `.html`, `.ts`, dll) yang dibuka di SFTP file manager bisa **diedit
+> langsung di aplikasi** dan **disimpan** — jika file remote → tulis balik ke remote (SFTP),
+> jika lokal → tulis balik ke disk lokal. Editor pakai **Monaco** (mesin editor VS Code).
+> Berlaku untuk **remote dan lokal**.
+
+**Kondisi awal (yang sudah ada):**
+- `sftp_preview` (`sftp.rs`) & `local_preview` (`localfs.rs`) baca **maks 512KB** → `PreviewModal` (`SftpPanel.tsx`) tampil **read-only** di `<pre>`.
+- Primitif tulis ke remote sudah ada: `sftp.create(path)` (truncate+write, dipakai di `do_upload`).
+
+**⚠️ Jebakan yang harus dihindari:** mode edit **tidak boleh** memakai hasil `*_preview` (terpotong 512KB) sebagai sumber — kalau disimpan, file remote/lokal akan ke-truncate & sisanya hilang. Edit **wajib baca file utuh**.
+
+**Keputusan (terkunci ✅):**
+1. ✅ **Editor = Monaco**, di-**install & bundle lokal** (bukan CDN) — `@monaco-editor/react` default load dari jsdelivr; di app Tauri harus offline-safe → `loader.config({ monaco })` + setup Web Worker via Vite. Konsekuensi bundle +~1–5 MB (wajar untuk desktop).
+2. ✅ **Batas ukuran**: **soft 1 MB** (default boleh edit). File **> 1 MB** tetap bisa dibuka lewat **dialog konfirmasi (English)** "This file is X MB. Editing large files may be slow. Continue?" → jika lanjut, tampil **loading "Downloading & preparing editor…"** agar user paham perlu waktu setup/download. **Hard cap ~10 MB** (di atas itu tolak total — Monaco freeze).
+3. ✅ **Remote + lokal** — dua-duanya bisa diedit & disimpan.
+4. ✅ **File biner** (mis. `.png`, `.zip`) → tetap **preview read-only** (editor hanya untuk teks; deteksi biner → blok edit).
+5. ✅ **Setelah Save → auto-refresh listing** sisi terkait (ukuran/tanggal update).
+
+**Rencana kerja:**
+- **Backend (Rust) — ✅ TAHAP 1 SELESAI (`cargo check` lolos):**
+  - ✅ `sftp_read_text(sftp_id, path)` (`sftp.rs`) — baca **utuh**; tolak bila > `EDIT_HARD_CAP` (10 MB), berisi **NUL byte** (biner), atau bukan **UTF-8 valid**.
+  - ✅ `sftp_write(sftp_id, path, content)` — `create` + `write_all` + flush/shutdown + **verify size**.
+  - ✅ `local_read_text` + `local_write` (`localfs.rs`) — versi lokal (share `EDIT_HARD_CAP`, cek NUL + UTF-8).
+  - ✅ 4 command didaftarkan di `lib.rs` `invoke_handler`.
+- **Setup Monaco lokal — ✅ TAHAP 2 SELESAI (`pnpm build` lolos):**
+  - ✅ Dep: `monaco-editor@0.56` + `@monaco-editor/react@4.7`.
+  - ✅ `src/monaco.ts` — offline setup: `loader.config({ monaco })` (pakai bundle lokal, bukan CDN) + Web Worker via Vite `?worker`. **Catatan:** path worker harus **tanpa** prefix `esm/vs/` (exports map monaco me-rewrite `"./*"` → `"./esm/vs/*.js"`; prefix ganda = gagal resolve). Diimpor sekali di `main.tsx`. Plus helper `languageForFile()` (ekstensi → language id Monaco).
+  - ✅ **Heap build**: bundling worker TS (kompiler TypeScript penuh) bikin `vite build` OOM di heap default → script `build` diberi `cross-env NODE_OPTIONS=--max-old-space-size=4096` (dep `cross-env`), berlaku juga di CI. Bundle main ~4.8 MB (gzip 1.26 MB) — wajar untuk desktop (load dari disk lokal); bahasa lain code-split, dimuat on-demand.
+- **Frontend (`SftpPanel.tsx`) — ✅ TAHAP 3 SELESAI (`tsc` + `pnpm build` lolos):**
+  - ✅ `PreviewModal` di-rewrite jadi **mesin state** `phase`: `image` (read-only, seperti dulu) · `confirm` (file >1MB) · `loading` ("Downloading & preparing editor…") · `editor` (Monaco) · `error`.
+  - ✅ Deteksi bahasa via `languageForFile(name)`; tema Monaco ikut app (`light`/`vs-dark` dari `documentElement.classList`).
+  - ✅ **Save** (tombol) + **Ctrl/Cmd+S** (via `saveRef` agar tak kena stale closure Monaco); indikator **dot amber** "unsaved" saat `text !== original`; **konfirmasi discard** saat close/Esc bila dirty.
+  - ✅ Dialog konfirmasi file **>1MB** (English, tampil ukuran MB) → Continue → loading → editor.
+  - ✅ `size` entry diteruskan ke modal (menentukan soft-cap); **auto-refresh listing** sisi terkait via `onSaved` (`loadLocal`/`loadRemote`) setelah save sukses.
+  - ✅ Command: lokal `local_read_text`/`local_write`, remote `sftp_read_text`/`sftp_write`.
+  - ✅ **Kontrol editor (header):** toggle **Word wrap** (ikon `WrapText`, default **on** — live via `editor.updateOptions`, tanpa remount) + toggle **Maximize/Restore** (`Maximize2`/`Minimize2` — modal `98vw×97vh` saat maximized vs `max-w-4xl×82vh` normal; Monaco `height:100%` + `automaticLayout` menyesuaikan).
+- **Perilaku default:** baca/tulis **UTF-8**; line ending (CRLF/LF) **tidak** dikonversi (isi disimpan apa adanya).
+
+**Verifikasi:**
+- ✅ `cargo check` (backend), `tsc` + `pnpm build` (frontend) lolos.
+- ✅ **Runtime Monaco (harness browser)**: app boot bersih tanpa error; ke-5 Web Worker Monaco (typescript/json/css/html/editor) ter-instansiasi OK via `MonacoEnvironment` lokal → **setup offline Tahap 2 terbukti**; `monaco.editor.create` sukses.
+- ⏳ **Belum diuji E2E di window native** (butuh Tauri runtime + koneksi SSH nyata — sama seperti fase SFTP lain): buka file remote/lokal → edit → Save → cek isi & tanggal ter-update; alur konfirmasi file >1MB; blok file biner; blok file >10MB.
+- ✅ **Terbukti jalan di window native** (uji user, 2026-07-22): file remote `.env_ex` terbuka di Monaco dengan syntax highlight + line number + minimap.
+
+### Fase 19 — Editor multi-file: minimize + tab + split view ⬜ RANCANGAN (belum dibangun)
+> Permintaan user (2026-07-22): (a) editor bisa **di-minimize** supaya bisa buka **>1 file**, (b) **split view** 2 file kiri-kanan ala VS Code/Chrome, dan **bisa dipisah lagi**.
+
+**Diagnosis:** editor Fase 18 adalah **modal 1-file** milik `SftpPanel` (`fixed inset-0`, state `preview` tunggal). Selama berbentuk modal, buka >1 file mustahil — karena itu minimize & split sebenarnya **satu paket**: editor harus jadi **surface multi-dokumen** dengan state sendiri.
+
+**Aset yang bisa dipakai ulang:** `paneTree.ts` (`splitLeaf`/`closeLeaf`/`setSizesAtPath` + renormalisasi, 21 unit test) & divider draggable `SplitPane.tsx` — logikanya persis kebutuhan split editor. ⚠️ Ganjalan: `PaneLeaf` terikat terminal (`open: OpenSession`, `TermOptions`).
+- **Opsi A (rekomendasi):** duplikasi ~90 baris tree-ops ke `editorTree.ts` khusus editor → **risiko nol** ke kode terminal yang stabil.
+- **Opsi B:** generify `paneTree` jadi generic + wrapper terminal → lebih rapi, tapi menyentuh kode terminal + 21 test-nya.
+
+**Rancangan:**
+1. **State editor naik ke level App** (bukan di `SftpPanel`, yang state-nya mati saat re-render/tutup): daftar file terbuka `{ id, path, name, isLocal, sftpId, dirty }`.
+2. **Overlay editor**: **tab bar** (1 tab/file, dot unsaved per tab) · **Minimize** → collapse jadi pill kecil ("📝 3 files"), file tetap hidup, klik = restore · **Split right/down** pada pane aktif → pohon pane; tutup satu sisi = collapse otomatis.
+3. **Monaco: satu `model` per file** (`monaco.editor.createModel`), bukan value string — agar **undo history, kursor, scroll terjaga** saat pindah tab/split. Model **wajib di-dispose** saat file ditutup (cegah bocor memori). Dua pane atas file yang sama otomatis berbagi model (sinkron, seperti VS Code).
+
+**Keputusan yang menunggu user (usulan Claude ditandai →):**
+1. **Sesi SSH ditutup saat editor masih buka** (file remote menyimpan `sftpId`, Save akan gagal): (a) tutup paksa editor file itu · **→ (b) biarkan terbuka read-only + tanda "session closed"** · (c) coba buka ulang sesi saat save.
+2. **Bentuk minimize**: **→ pill melayang** (dekat alur "edit sambil lihat file manager") · atau editor jadi **tab aplikasi** sendiri (seperti Settings).
+3. **Batas split**: 2 pane saja · **→ bebas bersarang** (gratis, logika pohon sudah ada).
+
+**Ukuran:** ~3–4x Fase 18. Usulan pentahapan: **T1** state ke App + tab bar + minimize/restore (belum split) · **T2** split view (pane tree + divider) + collapse saat tutup pane · **T3** polish (drag tab antar-pane, shortcut, konfirmasi close-all saat dirty).
 
 ---
 
