@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import Editor, { type OnMount } from "@monaco-editor/react";
-import { languageForFile } from "../monaco";
+import { useEditorDocs } from "../editorStore";
 import {
   Folder,
   File as FileIcon,
@@ -22,11 +21,6 @@ import {
   Server,
   Loader2,
   LinkIcon,
-  Save,
-  Pencil,
-  WrapText,
-  Maximize2,
-  Minimize2,
 } from "lucide-react";
 
 /** Pick an icon by file extension. */
@@ -173,6 +167,23 @@ export function SftpPanel({
   const [preview, setPreview] = useState<{ path: string; name: string; isLocal: boolean; size: number } | null>(null);
   const [checksum, setChecksum] = useState<{ name: string; hash: string | null; error?: string } | null>(null);
 
+  const { openDoc, lastSaved, invalidateSftp, rebindSftp } = useEditorDocs();
+
+  /** Images get the read-only preview; every other file opens in the editor. */
+  const openEntry = useCallback(
+    (p: { path: string; name: string; isLocal: boolean; size: number }) => {
+      const ext = p.name.split(".").pop()?.toLowerCase() || "";
+      if (IMAGE_EXTS.includes(ext)) setPreview(p);
+      else
+        openDoc({
+          ...p,
+          sftpId: p.isLocal ? null : sftpId,
+          sessionId: p.isLocal ? null : sessionId,
+        });
+    },
+    [openDoc, sftpId, sessionId],
+  );
+
   // Open the SFTP session (reuses the SSH connection) and pick starting dirs.
   useEffect(() => {
     let opened: string | null = null;
@@ -190,14 +201,21 @@ export function SftpPanel({
         opened = res.id;
         setSftpId(res.id);
         setRemotePath(res.home || ".");
+        // Files left open from a previous visit to this session become editable
+        // again, now pointed at the new SFTP channel.
+        rebindSftp(sessionId, res.id);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
     return () => {
-      if (opened) void invoke("sftp_close", { sftpId: opened }).catch(() => {});
+      if (!opened) return;
+      // Files still open in the editor belong to this session; flag them before
+      // it goes away so saving fails loudly instead of silently doing nothing.
+      invalidateSftp(opened);
+      void invoke("sftp_close", { sftpId: opened }).catch(() => {});
     };
-  }, [sessionId]);
+  }, [sessionId, invalidateSftp, rebindSftp]);
 
   const loadLocal = useCallback((path: string) => {
     setLocalLoading(true);
@@ -222,6 +240,21 @@ export function SftpPanel({
   useEffect(() => {
     if (sftpId && remotePath) loadRemote(sftpId, remotePath);
   }, [sftpId, remotePath, loadRemote]);
+
+  // Refresh the affected listing whenever the editor saves a file, so size and
+  // modified date stay current. Keyed on the save counter only — re-running on
+  // path changes would duplicate the loads those effects already do.
+  const savedTick = lastSaved?.n ?? 0;
+  const savedLocal = lastSaved?.isLocal ?? false;
+  useEffect(() => {
+    if (!savedTick) return;
+    if (savedLocal) {
+      if (localPath) loadLocal(localPath);
+    } else if (sftpId && remotePath) {
+      loadRemote(sftpId, remotePath);
+    }
+
+  }, [savedTick]);
 
   // Core transfer. `srcPath` is the full source path (local for "up", remote for
   // "down"); the backend derives the basename and drops it into the target dir.
@@ -522,7 +555,7 @@ export function SftpPanel({
             onDragItem={(name) => (dragRef.current = { side: "local", name })}
             onDropItem={() => onDropInto("local")}
             onContext={(name, e) => setMenu({ side: "local", name, x: e.clientX, y: e.clientY })}
-            setPreview={setPreview}
+            onOpenFile={openEntry}
             onOpen={(name) => {
               setSelLocal(new Set());
               setLocalPath(joinPath(localPath, name));
@@ -583,7 +616,7 @@ export function SftpPanel({
             onDragItem={(name) => (dragRef.current = { side: "remote", name })}
             onDropItem={() => onDropInto("remote")}
             onContext={(name, e) => setMenu({ side: "remote", name, x: e.clientX, y: e.clientY })}
-            setPreview={setPreview}
+            onOpenFile={openEntry}
             onOpen={(name) => {
               setSelRemote(new Set());
               setRemotePath(joinPath(remotePath, name));
@@ -709,10 +742,6 @@ export function SftpPanel({
           {...preview}
           sftpId={sftpId}
           onClose={() => setPreview(null)}
-          onSaved={() => {
-            if (preview.isLocal) loadLocal(localPath);
-            else if (sftpId) loadRemote(sftpId, remotePath);
-          }}
         />
       )}
 
@@ -781,237 +810,62 @@ function EntryIcon({ entry }: { entry: Entry }) {
   );
 }
 
-/** Files above this size prompt a "large file" confirmation before editing. */
-const EDIT_SOFT_CAP = 1024 * 1024; // 1 MB
-
-type PreviewPhase = "confirm" | "loading" | "editor" | "image" | "error";
-
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
 
+/** Read-only preview for images. Text files open in the editor overlay instead. */
 function PreviewModal({
   path,
   name,
   isLocal,
-  size,
   sftpId,
   onClose,
-  onSaved,
 }: {
   path: string;
   name: string;
   isLocal: boolean;
-  size: number;
   sftpId: string | null;
   onClose: () => void;
-  onSaved: () => void;
 }) {
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-  const isImage = IMAGE_EXTS.includes(ext);
-
-  const [phase, setPhase] = useState<PreviewPhase>(
-    isImage ? "loading" : size > EDIT_SOFT_CAP ? "confirm" : "loading",
-  );
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [original, setOriginal] = useState("");
-  const [text, setText] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState("");
-  const [maximized, setMaximized] = useState(false);
-  const [wrap, setWrap] = useState(true);
+  const [url, setUrl] = useState<string | null>(null);
 
-  const dirty = phase === "editor" && text !== original;
-  const isLight = document.documentElement.classList.contains("light");
-
-  // Save the current buffer back to remote/local, then refresh the listing.
-  const doSave = useCallback(async () => {
-    setSaving(true);
-    setSaveErr("");
-    try {
-      if (isLocal) await invoke("local_write", { path, content: text });
-      else await invoke("sftp_write", { sftpId, path, content: text });
-      setOriginal(text); // clears the dirty flag
-      onSaved();
-    } catch (e) {
-      setSaveErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  }, [isLocal, path, text, sftpId, onSaved]);
-
-  // Monaco's Ctrl/Cmd+S command captures a stale closure, so route it through
-  // a ref that always points at the latest doSave.
-  const saveRef = useRef(doSave);
-  saveRef.current = doSave;
-
-  // Load the image preview, or (for text) the full file when not gated behind
-  // the large-file confirmation.
   useEffect(() => {
-    if (phase !== "loading") return;
     let active = true;
     void (async () => {
       try {
-        if (isImage) {
-          const res = await invoke<number[]>(isLocal ? "local_preview" : "sftp_preview", isLocal ? { path } : { sftpId, path });
-          if (!active) return;
-          const type = ext === "svg" ? "image/svg+xml" : `image/${ext === "jpg" ? "jpeg" : ext}`;
-          setImageUrl(URL.createObjectURL(new Blob([new Uint8Array(res)], { type })));
-          setPhase("image");
-        } else {
-          const res = await invoke<string>(isLocal ? "local_read_text" : "sftp_read_text", isLocal ? { path } : { sftpId, path });
-          if (!active) return;
-          setOriginal(res);
-          setText(res);
-          setPhase("editor");
-        }
+        const ext = name.split(".").pop()?.toLowerCase() || "";
+        const res = await invoke<number[]>(
+          isLocal ? "local_preview" : "sftp_preview",
+          isLocal ? { path } : { sftpId, path },
+        );
+        if (!active) return;
+        const type = ext === "svg" ? "image/svg+xml" : `image/${ext === "jpg" ? "jpeg" : ext}`;
+        setUrl(URL.createObjectURL(new Blob([new Uint8Array(res)], { type })));
       } catch (e) {
-        if (active) {
-          setError(e instanceof Error ? e.message : String(e));
-          setPhase("error");
-        }
+        if (active) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (active) setLoading(false);
       }
     })();
     return () => { active = false; };
-  }, [phase, isImage, isLocal, sftpId, path, ext]);
-
-  const tryClose = useCallback(() => {
-    if (dirty && !window.confirm("You have unsaved changes. Discard them?")) return;
-    onClose();
-  }, [dirty, onClose]);
-
-  // Esc closes (guarding unsaved changes).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") tryClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [tryClose]);
-
-  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const onEditorMount: OnMount = (editor, monaco) => {
-    editorRef.current = editor;
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveRef.current(); });
-  };
-
-  // Toggle word wrap live without remounting the editor.
-  useEffect(() => {
-    editorRef.current?.updateOptions({ wordWrap: wrap ? "on" : "off" });
-  }, [wrap]);
-
-  const sizeMB = (size / (1024 * 1024)).toFixed(1);
-  const sizeClass =
-    phase === "editor"
-      ? maximized
-        ? "max-w-none w-[98vw] h-[97vh]"
-        : "max-w-4xl w-full h-[82vh]"
-      : "max-w-2xl w-full max-h-full";
+  }, [path, isLocal, sftpId, name]);
 
   return (
-    <div className={`fixed inset-0 z-[60] flex items-center justify-center bg-black/60 ${maximized ? "p-1" : "p-4"}`}>
-      <div
-        className={`flex flex-col rounded-lg border shadow-2xl ${sizeClass}`}
-        style={{ background: "var(--m-panel)", borderColor: "var(--m-border)" }}
-      >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: "var(--m-border)" }}>
-          <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold" title={path}>
-            {phase === "editor" ? <Pencil className="h-4 w-4 shrink-0 opacity-70" /> : null}
-            <span className="truncate">{phase === "editor" ? "Edit" : "Preview"}: {name}</span>
-            {dirty && <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" title="Unsaved changes" />}
-          </h2>
-          <div className="flex shrink-0 items-center gap-2">
-            {phase === "editor" && (
-              <>
-                <button
-                  onClick={() => setWrap((w) => !w)}
-                  title={wrap ? "Word wrap: on" : "Word wrap: off"}
-                  className={`rounded p-1 hover:bg-black/10 ${wrap ? "text-blue-500" : ""}`}
-                  style={wrap ? undefined : { color: "var(--m-muted)" }}
-                >
-                  <WrapText className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => setMaximized((m) => !m)}
-                  title={maximized ? "Restore" : "Maximize"}
-                  className="rounded p-1 hover:bg-black/10"
-                >
-                  {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
-                <button
-                  onClick={() => void doSave()}
-                  disabled={saving || !dirty}
-                  className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-                >
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </>
-            )}
-            <button onClick={tryClose} className="rounded p-1 hover:bg-black/10">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="flex max-h-full w-full max-w-2xl flex-col rounded-lg border shadow-2xl" style={{ background: "var(--m-panel)", borderColor: "var(--m-border)" }}>
+        <div className="flex shrink-0 items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--m-border)" }}>
+          <h2 className="truncate text-sm font-semibold" title={path}>Preview: {name}</h2>
+          <button onClick={onClose} className="rounded p-1 hover:bg-black/10"><X className="h-4 w-4" /></button>
         </div>
-
-        {saveErr && (
-          <div className="shrink-0 border-b px-4 py-2 text-xs text-red-500" style={{ borderColor: "var(--m-border)" }}>
-            {saveErr}
-          </div>
-        )}
-
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {phase === "confirm" && (
-            <div className="flex flex-col gap-4 p-6 text-sm" style={{ color: "var(--m-text)" }}>
-              <p>
-                This file is <strong>{sizeMB} MB</strong>. Editing large files may be slow and
-                will download the whole file first. Continue?
-              </p>
-              <div className="flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-md border px-4 py-1.5 text-xs" style={{ borderColor: "var(--m-border)" }}>
-                  Cancel
-                </button>
-                <button onClick={() => setPhase("loading")} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-500">
-                  Continue
-                </button>
-              </div>
+        <div className="min-h-0 flex-1 overflow-auto p-4 text-sm">
+          {loading && (
+            <div className="flex h-32 items-center justify-center">
+              <Loader2 className="h-5 w-5 animate-spin opacity-50" />
             </div>
           )}
-
-          {phase === "loading" && (
-            <div className="flex h-40 flex-col items-center justify-center gap-3" style={{ color: "var(--m-muted)" }}>
-              <Loader2 className="h-5 w-5 animate-spin opacity-60" />
-              <span className="text-xs">Downloading &amp; preparing editor…</span>
-            </div>
-          )}
-
-          {phase === "error" && (
-            <div className="p-4 text-sm text-red-500">{error}</div>
-          )}
-
-          {phase === "image" && (
-            <div className="min-h-0 flex-1 overflow-auto p-4">
-              {imageUrl && <img src={imageUrl} alt={name} className="mx-auto max-h-full max-w-full rounded" />}
-            </div>
-          )}
-
-          {phase === "editor" && (
-            <div className="min-h-0 flex-1">
-              <Editor
-                height="100%"
-                theme={isLight ? "light" : "vs-dark"}
-                defaultLanguage={languageForFile(name)}
-                defaultValue={original}
-                onChange={(v) => setText(v ?? "")}
-                onMount={onEditorMount}
-                loading={<div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin opacity-60" /></div>}
-                options={{
-                  fontSize: 13,
-                  minimap: { enabled: true },
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                  wordWrap: wrap ? "on" : "off",
-                }}
-              />
-            </div>
-          )}
+          {error && <div className="text-red-500">{error}</div>}
+          {url && <img src={url} alt={name} className="mx-auto max-h-full max-w-full rounded" />}
         </div>
       </div>
     </div>
@@ -1058,7 +912,7 @@ function FileHalf({
   onDragItem,
   onDropItem,
   onContext,
-  setPreview,
+  onOpenFile,
 }: {
   title: string;
   Icon: typeof HardDrive;
@@ -1077,7 +931,7 @@ function FileHalf({
   onDragItem: (name: string) => void;
   onDropItem: () => void;
   onContext: (name: string | null, e: React.MouseEvent) => void;
-  setPreview: (p: { path: string; name: string; isLocal: boolean; size: number } | null) => void;
+  onOpenFile: (p: { path: string; name: string; isLocal: boolean; size: number }) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(path);
@@ -1181,7 +1035,7 @@ function FileHalf({
               onClick={(ev) => onSelect(e.name, ev.shiftKey, ev.metaKey || ev.ctrlKey)}
                 onDoubleClick={() => {
                   if (e.isDir) onOpen(e.name);
-                  else setPreview({ path: joinPath(path, e.name), name: e.name, isLocal: side === "local", size: e.size });
+                  else onOpenFile({ path: joinPath(path, e.name), name: e.name, isLocal: side === "local", size: e.size });
                 }}
               onContextMenu={(ev) => {
                 ev.preventDefault();

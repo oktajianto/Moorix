@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { SettingsProvider } from "./settings";
 import { ToastProvider } from "./components/Toast";
+import { EditorProvider } from "./editorStore";
+import { EditorOverlay } from "./components/EditorOverlay";
 import { maybeAutoPull } from "./cloudSync";
 import "./monaco"; // configure Monaco to load locally (offline-safe) before any editor mounts
 import "./index.css";
@@ -12,7 +14,10 @@ function mount() {
     <React.StrictMode>
       <SettingsProvider>
         <ToastProvider>
-          <App />
+          <EditorProvider>
+            <App />
+            <EditorOverlay />
+          </EditorProvider>
         </ToastProvider>
       </SettingsProvider>
     </React.StrictMode>,
