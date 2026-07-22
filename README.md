@@ -2,17 +2,18 @@
 
 **The complete hosting, VPS, and cloud management app — SSH terminal and SFTP in one window, no more app-switching.**
 
-Managing a server used to mean juggling PuTTY for the terminal, FileZilla for file transfers, and a notepad full of credentials. **Moorix brings it all together**: SSH, FileZilla-style dual-pane SFTP, Telnet, Serial, port forwarding, and an encrypted credential vault — in one fast, lightweight app.
+Managing a server used to mean juggling PuTTY for the terminal, FileZilla for file transfers, VS Code for quick edits, and a notepad full of credentials. **Moorix brings it all together**: SSH, FileZilla-style dual-pane SFTP, a built-in code editor, Telnet, Serial, port forwarding, and an encrypted credential vault — in one fast, lightweight app.
 
 ![Moorix layout — SSH terminal and dual-pane SFTP side by side in a single window](./moorix-layout-sample.png)
 
 ## Why Moorix?
 
 - 🖥️ **SSH terminal + SFTP at the same time** — run commands while dragging and dropping files in the SFTP panel, without switching apps or logging in twice.
-- 📁 **FileZilla-style dual-pane SFTP** — recursive upload/download with progress & cancel, drag-and-drop from your OS, right-click to compress/extract ZIP, rename, SHA-256 checksum, or "Open in Terminal".
+- 📁 **FileZilla-style dual-pane SFTP** — recursive upload/download with progress & cancel, drag-and-drop from your OS, last-modified timestamps, right-click to compress/extract ZIP, rename, SHA-256 checksum, or "Open in Terminal".
+- 📝 **Built-in code editor** — open, edit, and save remote files in place with a Monaco (VS Code) editor: multi-file tabs, split view, minimize-to-dock, and syntax highlighting. No more download-edit-reupload.
 - 🔐 **Encrypted credential vault** — passwords & private keys live in your OS keychain, protected by a master password (AES-GCM). No more credentials scattered around.
 - 🔀 **SSH port forwarding** — Local (-L) and Dynamic/SOCKS5 (-D) straight from your saved profiles.
-- ☁️ **Cross-device sync via Google Drive** — settings & vault sync end-to-end encrypted; moving to a new machine is just one pull away.
+- ☁️ **Cross-device auto-sync via Google Drive** — settings & vault sync end-to-end encrypted, automatically in the background; moving to a new machine is just one pull away.
 - 🎨 **Split panes, multi-tab, 17+ themes** (Nord, Gruvbox, Catppuccin, and more) + custom keybindings.
 - 🔄 **Silent auto-update** — always on the latest version, no manual reinstalls.
 
@@ -28,6 +29,7 @@ Managing a server used to mean juggling PuTTY for the terminal, FileZilla for fi
 - **Backend:** Rust + Tauri 2 (`russh`, `portable-pty`, `serialport`)
 - **Frontend:** React + TypeScript + Vite + Tailwind CSS
 - **Terminal rendering:** xterm.js
+- **Code editing:** Monaco Editor
 - **Package manager:** pnpm
 
 Lihat [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) untuk arsitektur & roadmap lengkap.
