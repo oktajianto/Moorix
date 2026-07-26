@@ -11,6 +11,7 @@ import {
   pastePane,
   clearPane,
   selectAllPane,
+  openPaneSearch,
   paneSessionId,
 } from "./components/TerminalView";
 import { SftpPanel } from "./components/SftpPanel";
@@ -593,6 +594,7 @@ function App() {
       case "paste": pastePane(activePaneId); break;
       case "select-all": selectAllPane(activePaneId); break;
       case "clear": clearPane(activePaneId); break;
+      case "find": openPaneSearch(activePaneId); break;
       case "zoom-in": update({ fontSize: clampFont(settings.fontSize + 1) }); break;
       case "zoom-out": update({ fontSize: clampFont(settings.fontSize - 1) }); break;
       case "reset-zoom": update({ fontSize: DEFAULT_SETTINGS.fontSize }); break;

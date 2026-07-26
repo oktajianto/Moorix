@@ -3,7 +3,7 @@
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
 > Satu codebase yang menjangkau desktop **dan** mobile.
 
-Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-18
+Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-26
 
 ---
 
@@ -21,11 +21,15 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-18
 | 7A | Mobile-ready code (gate PTY/keyring, SSH-only, auto-reconnect) | ✅ |
 | 7B | Android build → **signed release APK** | ✅ |
 | 8 | Serial (desktop) + Telnet transports | ✅ |
-| 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (Remote -R, SFTP, sync, jump host: ⬜) |
+| 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (SFTP ✅ Fase 11 · sync ✅ Fase 17; **sisa**: Remote -R, jump host ⬜) |
 | 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ✅ — terakhir `v0.1.0-pre.7`) |
 | 11 | **SFTP file manager** (dual-pane lokal/remote, upload/download rekursif, DnD, ops remote) | ✅ T1 backend · T2 panel+navigasi · T3 transfer rekursif+progress+cancel · T4 drag-and-drop (in-app + OS drop) · T5 ops mkdir/rename/delete + menu klik-kanan |
 | 16 | **Google login (OAuth)** di Account & Sync + OAuth app **In production** + CI secret wiring + rilis `v0.1.0-pre.7` | ✅ |
 | 17 | **Google Drive sync nyata** (Push/Pull terenkripsi ke appDataFolder, refresh token silent) + **Account UI** (kartu profil + logout) + README global | ✅ |
+| 18–19 | **SFTP edit in-app (Monaco)** + **Editor multi-file** (tab, minimize, split view) | ✅ (detail di §16 Fase 18–19) |
+| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · export/import `.sql`) | 🎯 **pre-rilis 14** · ⬜ RANCANGAN (lihat **§19**) |
+| 21 | **Terminal Search** (Find in terminal, **Ctrl+F**) — cari teks di output SSH/CMD/PowerShell, highlight + next/prev, hotkey overridable | ✅ (implementasi; uji native pending — lihat **§16 Fase 21**) |
+| 22 | **SFTP: dropdown folder induk** di address bar — lompat ke folder induk/root tanpa klik Up berkali-kali | ✅ (implementasi; uji native pending — lihat **§16 Fase 22**) |
 
 > Detail per fase ada di **§16 Progress Log**. Kolom "Status" di-update tiap fase (jangan dihapus).
 
@@ -39,13 +43,16 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-18
 3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
 4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.
 
+### 🎯 Target pre-rilis 14
+- **Database Manager native** (Fase 20) — panel DB ala phpMyAdmin di dalam Moorix: MySQL/MariaDB + PostgreSQL lewat SSH tunnel yang sudah ada, dengan **profil DB** (anak dari profil SSH, kredensial di vault), browse tabel, SQL editor (reuse Monaco), edit/insert/delete, dan export/import `.sql`. **Rancangan lengkap + pentahapan di §19.** Belum mulai koding.
+
 ### 🟡 Opsional — nilai tambah
 - ~~**Config sync**: bangun server sync minimal~~ ✅ **SELESAI via Google Drive** (Fase 17) — Push/Pull E2E-encrypted ke appDataFolder; tanpa server sendiri.
-- **SFTP**: lebar panel **persist antar-restart**, **preview file**, **checksum/verify** transfer, progres byte per-file (kini per-file by name/index), simbol link ikon khusus.
-- **Editor multi-file (minimize + tab + split view ala VS Code)** — ⬜ **RANCANGAN** (lihat Fase 19 di §16): editor jadi surface multi-dokumen, reuse logika `paneTree`, Monaco model per file. Menunggu 3 keputusan user.
-- **SFTP edit file in-app (Monaco)** — ✅ **SELESAI (kode)**, ⏳ uji E2E native (lihat Fase 18 di §16): buka file teks → edit di Monaco → Save tulis balik ke remote/lokal; soft-cap 1 MB (konfirmasi >1MB), hard-cap 10 MB, biner tetap read-only, auto-refresh listing setelah save.
+- **SFTP**: lebar panel **persist antar-restart**, **preview file**, **checksum/verify** transfer, progres byte per-file (kini per-file by name/index), simbol link ikon khusus. ~~Dropdown folder induk di address bar~~ ✅ **SELESAI** (Fase 22 — implementasi; uji native pending).
+- **Editor multi-file (minimize + tab + split view ala VS Code)** — ✅ **SELESAI & teruji native** (Fase 19, T1–T3, user 2026-07-22): editor jadi surface multi-dokumen, tab bar + dot unsaved, minimize→pill, split view bebas bersarang (pemilih file), Monaco model per file (undo/scroll/kursor terjaga), read-only saat sesi SFTP tertutup + re-bind saat panel dibuka lagi.
+- **SFTP edit file in-app (Monaco)** — ✅ **SELESAI & teruji native** (Fase 18, user 2026-07-22): buka file teks → edit di Monaco → Save tulis balik ke remote/lokal; soft-cap 1 MB (konfirmasi >1MB), hard-cap 10 MB, biner tetap read-only, auto-refresh listing setelah save.
 - **Store-only settings** (UI ada, belum berpengaruh runtime): **Sixel** (butuh `@xterm/addon-image`), **Word separators** (custom double-click selection), **Copy with formatting** (rich clipboard), **Bracketed paste**, **Require key to click links** (butuh `@xterm/addon-web-links`).
-- **Terminal**: ligatures **live** (kini hanya terminal baru), renderer switch **live** (kini saat create).
+- **Terminal**: ligatures **live** (kini hanya terminal baru), renderer switch **live** (kini saat create). ~~Search (Ctrl+F)~~ ✅ **SELESAI** (Fase 21 — implementasi; uji native pending).
 - **Restore tabs**: pulihkan **layout split** (kini single-pane), dan urutan/tab aktif.
 - **SSH advanced (lanjutan Fase 9)**: **Remote (-R)** forwarding, **X11/agent forwarding**, skip banner, **reuse session** (multiplexing), **jump host**.
 - **Profile editor** untuk **Serial/Telnet** (§17) — kini hanya SSH.
@@ -244,11 +251,11 @@ Moorix/
 ## 7. Fitur: MVP vs Lanjutan
 
 ### MVP (v0.1) — target pertama
-- [ ] Desktop: buka **local shell** dalam tab
-- [ ] Semua platform: buka **SSH** (auth password + private key)
-- [ ] Tab management (buka/tutup/pindah)
-- [ ] 1 tema default + font monospace
-- [ ] Settings dasar (font size, tema)
+- [x] Desktop: buka **local shell** dalam tab
+- [x] Semua platform: buka **SSH** (auth password + private key)
+- [x] Tab management (buka/tutup/pindah)
+- [x] 1 tema default + font monospace
+- [x] Settings dasar (font size, tema)
 - [x] Mobile build jalan dengan SSH-only (Android APK; SSH-only, local shell di-gate)
 
 ### v0.2+
@@ -261,8 +268,9 @@ Moorix/
 
 ### Lanjutan (v1.0+)
 - [~] SSH port forwarding — Local (-L) & Dynamic (-D/SOCKS5) ✅; Remote (-R) ⬜
-- [ ] SFTP file browser
-- [ ] Sync profil antar device (terenkripsi)
+- [x] SFTP file browser — dual-pane + transfer rekursif + ops remote (Fase 11)
+- [x] **Edit file in-app (Monaco)** + **editor multi-file** (tab, minimize, split view) (Fase 18–19)
+- [x] Sync profil/config antar device (terenkripsi) — via Google Drive, Push/Pull + auto-sync (Fase 17)
 - [ ] Plugin system
 - [ ] Jump host / bastion, SSH agent forwarding
 
@@ -682,7 +690,7 @@ Setelah plan ini disetujui:
 - ✅ **README**: bagian atas ditulis ulang **bahasa Inggris** (audiens global) — tagline "hosting/VPS/cloud management, SSH + SFTP satu jendela", screenshot `moorix-layout-sample.png` (baru, root repo), 7 poin "Why Moorix?", CTA unduh ke Releases; Tech stack ke bawah tetap Indonesia.
 - ✅ Verifikasi: `tsc` + `cargo check` lolos; app dev auto-rebuild & jalan.
 
-### Fase 18 — SFTP: edit file in-app (Monaco) + save ke remote/lokal ✅ SELESAI (kode) · ⏳ E2E native window
+### Fase 18 — SFTP: edit file in-app (Monaco) + save ke remote/lokal ✅ SELESAI (teruji native, user 2026-07-22)
 > **Progress bertahap:** ✅ Tahap 1 (backend) · ✅ Tahap 2 (setup Monaco lokal) · ✅ Tahap 3 (UI editor + save + auto-refresh)
 > Tujuan: file teks (`.txt`, `.html`, `.ts`, dll) yang dibuka di SFTP file manager bisa **diedit
 > langsung di aplikasi** dan **disimpan** — jika file remote → tulis balik ke remote (SFTP),
@@ -726,11 +734,10 @@ Setelah plan ini disetujui:
 - ✅ `cargo check` (backend), `tsc` + `pnpm build` (frontend) lolos.
 - ✅ **Runtime Monaco (harness browser)**: ke-5 Web Worker Monaco (typescript/json/css/html/editor) ter-instansiasi OK via `MonacoEnvironment` lokal → **setup offline Tahap 2 terbukti**; `monaco.editor.create` sukses.
 - ⚠️ **Browser preview tidak bisa dipakai memverifikasi app ini.** `main.tsx` menunggu `maybeAutoPull()` sebelum `mount()`, dan rantai itu memanggil Tauri store yang **menggantung** (bukan reject) di browser biasa → `mount()` tak pernah jalan, `#root` kosong, tanpa error. Jadi "tanpa error di console" **bukan** bukti app sehat. Verifikasi UI **wajib** di window native (`pnpm tauri dev`). Tes Monaco di atas tetap sahih karena meng-import monaco langsung, tak bergantung app mount.
-- ⏳ **Belum diuji E2E di window native** (butuh Tauri runtime + koneksi SSH nyata — sama seperti fase SFTP lain): buka file remote/lokal → edit → Save → cek isi & tanggal ter-update; alur konfirmasi file >1MB; blok file biner; blok file >10MB.
-- ✅ **Terbukti jalan di window native** (uji user, 2026-07-22): file remote `.env_ex` terbuka di Monaco dengan syntax highlight + line number + minimap.
+- ✅ **Teruji E2E di window native** (uji user, 2026-07-22): file remote `.env_ex` terbuka di Monaco dengan syntax highlight + line number + minimap; edit → Save → isi & tanggal ter-update. Alur konfirmasi >1MB, blok biner, dan blok >10MB tercakup lewat jalur klasifikasi di Fase 19-T1.
 
-### Fase 19 — Editor multi-file: minimize + tab + split view 🟡 SEDANG DIKERJAKAN
-> **Progress bertahap:** ✅ T1 (state ke App + tab bar + minimize) · ✅ T2 (split view) · ✅ T3 (polish)
+### Fase 19 — Editor multi-file: minimize + tab + split view ✅ SELESAI
+> **Progress bertahap:** ✅ T1 (state ke App + tab bar + minimize) · ✅ T2 (split view) · ✅ T3 (polish) — **ketiga tahap selesai & teruji di window native (user, 2026-07-22).**
 > **Keputusan user (2026-07-22):** ketiga usulan Claude di bawah **disetujui** — (1) sesi tertutup → read-only + tanda, (2) minimize = pill melayang, (3) split bebas bersarang.
 > Permintaan user (2026-07-22): (a) editor bisa **di-minimize** supaya bisa buka **>1 file**, (b) **split view** 2 file kiri-kanan ala VS Code/Chrome, dan **bisa dipisah lagi**.
 
@@ -781,15 +788,42 @@ Setelah plan ini disetujui:
 - 🐛 **Bug ditemukan & diperbaiki — read-only tidak pernah dicabut.** Setelah panel SFTP ditutup lalu **dibuka lagi**, dokumen tetap read-only selamanya. Sebab: `sessionClosed` hanya pernah di-set `true`, dan `sftpId` lama tak pernah diganti dengan channel baru. **Fix:** `EditorDoc` kini menyimpan **`sessionId` (sesi SSH)** yang umurnya lebih panjang dari `sftpId` (yang diterbitkan ulang tiap panel dibuka). `SftpPanel` memanggil `rebindSftp(sessionId, sftpIdBaru)` setelah `sftp_open` sukses → dokumen milik sesi itu diarahkan ke channel baru dan `sessionClosed` dicabut, jadi **bisa diedit & disimpan lagi**.
 - 🐛 **Celah terkait yang ikut ditutup — tabrakan `docId` antar-server.** `docId` remote sebelumnya hanya `remote:<path>`, sehingga file **berpath sama di dua server berbeda** (mis. `/root/.env` di VPS A dan B) dianggap **satu dokumen** — membuka yang kedua hanya memfokuskan tab yang pertama, menampilkan isi server yang salah. Kini `remote:<sessionId>:<path>` (lokal tetap `local:<path>`). `docId` juga dipakai sebagai path model Monaco, jadi keunikan ini wajib.
 - ✅ **Tab mendekat saat split (permintaan user, ala Chrome).** Saat split memakai file lain, tab file itu **dipindah tepat di sebelah** tab file pane sumber, sehingga urutan tab mencerminkan tata letak split. Indeks anchor dihitung ulang setelah pemindahan agar tak meleset.
-- ⏳ Uji manual: tutup panel SFTP → buka lagi → file remote **bisa diedit kembali** (badge read-only hilang); split dengan file lain → tab-nya berpindah mendekat.
+- ℹ️ **Kode lengkap** (kedua fix di atas + tab-mendekat sudah terpasang). Sisa hanya re-verifikasi manual opsional: tutup panel SFTP → buka lagi → file remote bisa diedit kembali (badge read-only hilang); split dengan file lain → tab-nya berpindah mendekat.
 
 ---
 
-## 17. Rancangan: New Profile & Profile Editor (SSH) — ⬜ BELUM DIBANGUN
+### Fase 21 — Terminal Search (Find in terminal, Ctrl+F) ✅ (implementasi; uji native pending)
+> Permintaan user (2026-07-26): tambah **search (Ctrl+F)** di panel terminal (SSH/CMD/PowerShell) untuk mencari teks yang muncul di output terminal — dengan highlight & navigasi next/prev.
 
-> Direkam atas permintaan user. **Jangan dibangun dulu** — menunggu screenshot sub-tab
-> yang belum ada (CIPHERS, COLORS, LOGIN SCRIPTS, INPUT). Fokus rancangan: **template SSH
-> sampai tab ADVANCED**.
+**Rancangan:** search bekerja di sisi frontend atas isi buffer xterm (scrollback termasuk), jadi **tidak perlu perubahan backend Rust** — murni addon xterm + overlay React. Addon `@xterm/addon-search` sudah tercantum di §4 sejak awal tapi belum terpasang; kini dipasang (`0.16.0`, kompatibel xterm 6).
+
+- ✅ **Dep:** `pnpm add @xterm/addon-search` → `0.16.0`.
+- ✅ `src/components/TerminalView.tsx` — `SearchAddon` di-*load* per-pane di `createEntry`, disimpan di `PaneEntry.search`. Overlay dirender **sebagai sibling** dari container xterm (bukan anak yang sama) supaya React tak berebut DOM dengan xterm saat pane di-*re-parent* antar split. Fungsi modul baru **`openPaneSearch(paneId)`** membuka Find bar pane aktif lewat `PaneEntry.openSearch` (ref callback yang didaftarkan komponen React saat mount, di-null-kan saat unmount). Sinyal `searchSignal` di-*bump* tiap Ctrl+F agar menekan lagi saat bar terbuka **me-refocus** input & re-seed dari seleksi terminal. Warna highlight ikut tema (`--m-accent` untuk match aktif).
+- ✅ `src/components/TerminalSearch.tsx` (baru) — Find bar melayang di pojok kanan-atas pane: input + hitungan **`index/total`** (dari `onDidChangeResults`) + toggle **Match case / Whole word / Regex** + tombol prev/next/close. **Enter** = next, **Shift+Enter** = prev, **Esc** = tutup (bersihkan dekorasi + balikkan fokus ke terminal). Pencarian **incremental** saat mengetik (highlight semua match, dekorasi via `decorations`); pola regex invalid → indikator "Bad pattern" tanpa melempar. Prefill dari seleksi terminal (satu baris) saat dibuka.
+- ✅ `src/hotkeys.ts` — action baru **`find`** default **`Ctrl-F`** (masuk registry → **overridable** di Settings → Hotkeys, sejajar copy/paste/clear). Karena lewat registry, dispatcher global App menangkap Ctrl+F **sebelum** xterm meneruskannya ke shell (capture-phase `preventDefault`+`stopPropagation`), jadi tidak lagi terkirim sebagai `forward-char` ke readline.
+- ✅ `src/App.tsx` — `case "find": openPaneSearch(activePaneId)` di `runAction`; import `openPaneSearch`.
+- ✅ **Verifikasi:** `tsc --noEmit` bersih + `pnpm build` lolos (bundle addon OK). **Uji E2E native masih pending** — output terminal berasal dari backend Tauri (PTY/SSH) yang tak aktif di preview browser biasa, jadi pencarian atas output nyata perlu window native (konsisten dgn catatan uji native di dokumen ini).
+- ℹ️ **Catatan default hotkey:** `Ctrl-F` sengaja dipilih sesuai permintaan user meski di shell ia biasanya `forward-char`. Karena overridable, user yang butuh `forward-char` bisa memindah ke mis. `Ctrl-Shift-F`.
+
+---
+
+### Fase 22 — SFTP: dropdown folder induk di address bar ✅ (implementasi; uji native pending)
+> Permintaan user (2026-07-26): di **address bar SFTP**, tambah **dropdown daftar folder induk** — saat sudah masuk folder dalam-dalam, bisa **lompat langsung** ke folder induk mana pun atau ke root **tanpa klik Up/Back berkali-kali**.
+
+- ✅ `src/components/SftpPanel.tsx` — helper murni **`ancestors(path)`** membangun rantai folder saat ini → semua induk → root (nearest-first), mis. `/a/b/c` → `["/a/b/c","/a/b","/a","/"]`. Dibangun dengan menjalankan `parentPath` berulang, jadi berhenti wajar di `/` (remote) atau drive root `C:` (lokal) — konsisten dengan tombol Up yang sudah ada.
+- ✅ **UI dropdown** di toolbar `FileHalf`: tombol **chevron** di ujung address bar (di samping teks path). Klik → menu daftar folder (ikon `Folder` + nama folder, `title` = path penuh), folder aktif ditandai **"current"** (non-navigasi). Pilih salah satu → `onPath(folder)` → pane pindah + listing dimuat ulang. Menu **tutup** saat klik di luar / **Esc**. Berlaku untuk **kedua pane** (Local & Remote); tombol dinonaktifkan saat pane remote belum tersambung (`disabled`).
+- ✅ **Selection dibersihkan saat lompat** — `onPath` di kedua sisi kini `setSel*(new Set())` dulu sebelum set path (juga memperbaiki input-path manual: seleksi lama tak lagi menyorot nama yang tak ada di folder baru).
+- ✅ **Verifikasi:** `tsc --noEmit` bersih + `pnpm build` lolos. **Uji E2E native pending** (SFTP butuh backend Tauri — sama seperti fitur SFTP lain).
+
+---
+
+## 17. Rancangan: New Profile & Profile Editor (SSH) — ✅ SEBAGIAN BESAR TERBANGUN
+
+> **Update status:** rancangan ini **sudah diimplementasikan** — `NewProfilePicker` (template SSH + duplicate)
+> dan `ProfileEditor` SSH 7 tab (GENERAL/PORTS/ADVANCED/CIPHERS/COLORS/LOGIN SCRIPTS/INPUT) sudah jalan;
+> CIPHERS/keep-alive/ready-timeout diterapkan ke russh, COLORS/INPUT/LOGIN SCRIPTS via `TermOptions` per-sesi
+> (detail di §18 "Update Fase 5"). **Sisa ⬜:** PORTS Remote (-R), X11/agent forwarding, skip banner, reuse
+> session (butuh kerja russh), + template Serial/Telnet editor. Bagian di bawah = spesifikasi rancangan asli (arsip).
 
 ### 17.1 Alur "New profile"
 1. Settings → Profiles → **New ▾ → New profile**
@@ -889,4 +923,161 @@ mengubah frontend. Password **tidak pernah** disimpan di store (`moorix.json`); 
 - **Backend russh saat ini belum mendukung:** port forwarding, keep-alive, X11/agent forwarding, ciphers kustom, jump host. Field-field ini akan disimpan dulu; dukungan backend menyusul (perlu kerja di `ssh.rs`).
 - Model `Profile` perlu diperluas: simpan `options` per tipe (host/port/user/auth/forwards/advanced…).
 
-**Status:** rancangan tercatat. Implementasi menunggu screenshot sub-tab tersisa + konfirmasi user.
+**Status:** ✅ **Terimplementasi** (editor SSH 7 tab + backend russh untuk CIPHERS/keep-alive/timeout; COLORS/INPUT/LOGIN SCRIPTS frontend). **Sisa ⬜:** Remote (-R) forwarding, X11/agent forwarding, skip banner, reuse session, dan editor profil Serial/Telnet.
+
+---
+
+## 19. Rancangan: Database Manager native (Fase 20) — 🎯 PRE-RILIS 14 · ⬜ BELUM DIBANGUN
+
+> Direkam atas permintaan user (diskusi 2026-07-24). **Jangan mulai koding dulu** — dokumen ini
+> adalah rencana bertahap yang harus tersusun rapi sebelum implementasi. Target rilis: **v0.1.0-pre.14**.
+
+### 19.0 Tujuan & prinsip
+
+Membangun **DB manager native** di dalam Moorix (bukan meng-embed phpMyAdmin), setara fungsi harian phpMyAdmin: browse data, jalankan SQL, edit/insert/delete baris, dan **export/import `.sql`**. Mendukung **MySQL/MariaDB** dan **PostgreSQL**, dengan engine dipilih per-profil (disarankan otomatis dari deteksi server, keputusan final manual).
+
+Prinsip:
+- **Native, menyatu dengan Moorix** — panel Database jadi **tipe tab baru** sejajar Terminal/SFTP dalam satu window (selaras positioning "semua dalam satu window"). Reuse tema, vault, dan Monaco.
+- **Nol dependensi wajib di server** — cukup DB-nya jalan; tidak perlu phpMyAdmin/web server terpasang.
+- **Koneksi selalu lewat SSH tunnel** dari sesi SSH yang sedang aktif (mekanisme `direct-tcpip`, sama dengan port forwarding -L yang sudah ada).
+- **MySQL/MariaDB dituntaskan dulu** (Fase 20A–20C), **PostgreSQL menyusul** (Fase 20D) — tapi abstraksi driver dipasang **sejak awal** supaya Postgres nyusul tanpa merombak UI.
+
+### 19.1 Keputusan (terkunci ✅ — hasil diskusi user 2026-07-24)
+
+1. ✅ **Native DB manager**, bukan embed phpMyAdmin.
+2. ✅ **Lengkap ala phpMyAdmin**: browse, SQL editor, edit/insert/delete, **export & import**.
+3. ✅ **Engine**: MySQL/MariaDB **dan** PostgreSQL; pilihannya tergantung yang tersedia di server aktif.
+4. ✅ **Export format utama `.sql`** (via `mysqldump`/`pg_dump` server-side); CSV per-tabel = sekunder.
+5. ✅ **Profil DB** = **anak dari profil SSH**. Satu server bisa punya **banyak akun DB**. Profil DB menyimpan `username`/`password` (di **vault** terenkripsi) → bisa masuk lagi sewaktu-waktu, semudah SSH. Bagian SSH **auto** dari profil SSH induk (profil DB tidak menyimpan kredensial SSH apa pun).
+6. ✅ **Tombol picker DB** (dropdown) ada di **layout SSH, dekat tombol SFTP**.
+7. ✅ **Quick-connect sekali pakai** — **perlu** (bisa coba koneksi tanpa menyimpan profil).
+8. ✅ **Auto-deteksi engine** — dipakai untuk **menyarankan** saat membuat profil DB baru (mis. "terdeteksi MySQL di :3306, Postgres di :5432"), tapi keputusan final tetap **manual** lewat profil.
+
+### 19.2 Model data — profil DB sebagai anak profil SSH
+
+```
+SSHProfile
+ ├─ (kredensial SSH → vault/keychain, tak berubah)
+ └─ databases: DBProfile[]
+      DBProfile {
+        id
+        sshProfileId          // referensi induk; tunnel & host SSH dari sini
+        name                  // label, mis. "app-prod (root)"
+        engine                // "mysql" | "mariadb" | "postgres"
+        dbUser
+        dbPassword            // → vault (secret_set/get, id = db profile id); TIDAK di store plaintext
+        host = "127.0.0.1"    // dari sudut pandang server (via tunnel); jarang diubah
+        port = 3306 | 5432
+        defaultDatabase?      // opsional
+      }
+```
+
+- Disimpan di `tauri-plugin-store` (metadata `dbProfiles`), password **hanya** di vault (pola sama dgn SSH — §18).
+- **Konsistensi kredensial**: satu set `dbUser`/`dbPassword` dipakai untuk **(a)** koneksi driver Rust **dan** **(b)** `mysqldump`/`pg_dump` saat export/import. Tak ada input ganda.
+- **Dikelola di dalam SSH profile editor** — tambah section **"Databases"** di editor profil SSH (§17), plus tombol "quick add" dari dropdown picker.
+
+### 19.3 Arsitektur backend (Rust)
+
+**Abstraksi driver (dipasang sejak awal):**
+```rust
+#[async_trait]
+trait DatabaseDriver: Send {
+    async fn list_databases(&self) -> Result<Vec<String>>;
+    async fn list_schemas(&self, db: &str) -> Result<Vec<String>>;      // Postgres: schema; MySQL: = database
+    async fn list_tables(&self, db: &str, schema: Option<&str>) -> Result<Vec<TableInfo>>;
+    async fn columns(&self, table: &TableRef) -> Result<Vec<ColumnInfo>>; // + PK/nullable/type
+    async fn indexes(&self, table: &TableRef) -> Result<Vec<IndexInfo>>;
+    async fn foreign_keys(&self, table: &TableRef) -> Result<Vec<FkInfo>>;
+    async fn run_sql(&self, sql: &str) -> Result<QueryResult>;           // SQL bebas (bisa multi-statement)
+    async fn browse(&self, table: &TableRef, page: Page, sort: Option<Sort>, filter: Option<Filter>) -> Result<QueryResult>;
+    async fn insert_row(&self, table: &TableRef, values: Row) -> Result<()>;
+    async fn update_row(&self, table: &TableRef, pk: PkValues, values: Row) -> Result<()>;
+    async fn delete_row(&self, table: &TableRef, pk: PkValues) -> Result<()>;
+}
+```
+Implementasi: `MySqlDriver` (Fase 20A–C), `PgDriver` (Fase 20D). Perbedaan engine (hierarki schema, quoting `` ` `` vs `"`, query introspeksi) **dikurung di balik trait** ini.
+
+**Crate driver:** `sqlx` (satu crate, MySQL + Postgres, mode query dinamis/runtime) **atau** `mysql_async` + `tokio-postgres` bila butuh kontrol tipe lebih detail. **Keputusan crate ditunda ke awal Fase 20A** (setelah spike tipe-mapping) — lihat §19.7.
+
+**Koneksi via tunnel:** `russh` buka channel `direct-tcpip` ke `127.0.0.1:<port>` di server (reuse mekanisme port-forward -L). Driver diarahkan ke port lokal hasil forward. **Lifecycle koneksi DB + pool diikat ke sesi SSH**: sesi ditutup → tunnel + pool ditutup. (Perhatikan pola bug read-only editor di Fase 19-T3: bila panel dibuka-ulang, sesi SSH lebih panjang umurnya daripada channel — pakai `sessionId` sebagai anchor, bukan channel id.)
+
+**Bentuk payload hasil query (`QueryResult`) — pekerjaan inti yang sering diremehkan:**
+```
+QueryResult {
+  columns: [{ name, dbType, nullable, isPk }]
+  rows: [[cell, ...]]        // cell = string | null (lihat aturan tipe)
+  rowsAffected, meta
+}
+```
+Aturan tipe (WAJIB, cegah bug halus):
+- **`BIGINT`/`DECIMAL`/`NUMERIC` → kirim sebagai STRING** (number JS kehilangan presisi).
+- **`BLOB`/`bytea`/biner → hex atau base64 + flag**, ditampilkan sebagai badge "(binary N bytes)" + tombol download; **tidak** di-render mentah.
+- **`NULL`** dibedakan dari string kosong (kirim `null`, UI tampil badge `NULL`).
+- `DATE/DATETIME/TIMESTAMP/JSON/ENUM` → string apa adanya dari server.
+
+### 19.4 Introspeksi skema per-engine (ringkas)
+
+| Kebutuhan | MySQL/MariaDB | PostgreSQL |
+|---|---|---|
+| Hierarki | `server → database → table` | `server → database → schema → table` (ada layer schema) |
+| List DB | `SHOW DATABASES` | `SELECT datname FROM pg_database WHERE NOT datistemplate` (harus reconnect per-DB utk isinya) |
+| List tabel | `information_schema.tables` / `SHOW TABLES` | `information_schema.tables` (filter `table_schema`) |
+| Kolom + PK | `information_schema.columns` + `SHOW KEYS`/`key_column_usage` | `information_schema.columns` + `pg_index`/`key_column_usage` |
+| Quoting identifier | `` `nama` `` | `"nama"` |
+
+> **Postgres perlu koneksi ke 1 database dulu** untuk melihat isinya (beda dgn MySQL yang satu koneksi lihat semua). UI tree harus menangani layer schema ekstra ini.
+
+**Edit/hapus baris butuh Primary Key:** introspeksi PK/unique **wajib jalan sebelum** fitur edit. Bila hasil query tak punya PK (mis. hasil JOIN), **edit inline di-disable** dan diarahkan ke SQL manual — persis peringatan phpMyAdmin. Semua UPDATE/DELETE **diparameterisasi** (bukan string concat) + identifier di-quote sesuai engine.
+
+### 19.5 Export / Import `.sql` (server-side, keunggulan unik Moorix)
+
+Karena Moorix **sudah SSH** ke server, **jangan reimplementasi logika dump di Rust**:
+- **Export** → jalankan `mysqldump` / `pg_dump` **di server via exec SSH**, hasil `.sql` ditarik ke lokal via **SFTP** (yang sudah ada). Robust: struktur + data + trigger + FK order beres. Scope pilihan: seluruh DB / tabel terpilih / struktur-saja / data-saja.
+- **Import** → kirim `.sql` ke server via SFTP lalu `mysql < file` / `psql -f file` via exec, atau (file kecil) eksekusi statement lewat driver.
+- **CSV** per-tabel = opsi sekunder, langsung dari driver.
+
+**⚠️ Detail keamanan kredensial (WAJIB):** jangan lempar password sebagai `-p<pass>` / di argv (terlihat di `ps aux` user lain). Pakai file sementara **`--defaults-extra-file`** (MySQL) atau **`.pgpass`/`PGPASSWORD` env** (Postgres), ditulis via SFTP dengan **permission 600**, lalu **dihapus** setelah selesai.
+
+### 19.6 Frontend
+
+- **Panel Database** = tipe tab baru (sejajar Terminal/SFTP). Di layout sesi SSH: **dropdown picker** dekat tombol SFTP → daftar profil DB milik server aktif + "＋ Tambah koneksi DB…" + "Quick connect (sekali pakai)". Pilih → buka tab Database.
+- **Layout panel:** kiri = **tree** `database → (schema) → tabel/view`; kanan = tab kerja:
+  - **Structure** — kolom, tipe, PK/index/FK.
+  - **Browse** — data grid: pagination, sort kolom, filter, **inline edit / insert / delete** (aktif hanya bila PK terdeteksi).
+  - **SQL** — **reuse Monaco** (sudah di app) dengan syntax highlight SQL → jalankan, hasil di grid. Win besar: editor sudah matang dari Fase 18–19.
+  - **Insert** — form per kolom.
+  - **Export / Import** — pilihan scope + progress (reuse pola transfer SFTP).
+- **Grid besar** → virtualisasi + pagination server-side (jangan tarik sejuta baris ke webview).
+
+### 19.7 Pentahapan (biar tetap bisa rilis; garap MySQL dulu tuntas)
+
+| Sub-fase | Isi | Output |
+|---|---|---|
+| **20A — MVP (MySQL)** | Spike crate & tipe-mapping · profil DB (CRUD + vault) · dropdown picker dekat SFTP · quick-connect · tunnel + pool terikat sesi · tree DB→tabel · **SQL editor (Monaco) + result grid** · browse tabel + pagination | Bisa konek & jalankan SQL, lihat data — sudah berguna |
+| **20B — Edit (MySQL)** | Introspeksi PK/index/FK · tab Structure · inline **edit/insert/delete** (parameterized, guard PK) | Setara fungsi harian phpMyAdmin |
+| **20C — Export/Import (MySQL)** | `mysqldump`/import via SSH+SFTP (aman: `--defaults-extra-file`) · export CSV · progress | **Fitur pamungkas**, MySQL tuntas |
+| **20D — PostgreSQL** | Isi `PgDriver` (layer schema, quoting `"`, `pg_dump`/`psql`) · auto-deteksi engine di server · paritas fitur 20A–C | Multi-engine penuh |
+
+**Urutan disengaja:** tuntaskan **MySQL (20A–C)** sebelum Postgres — menggarap dua engine paralel di awal menggandakan permukaan bug (tipe, quoting, schema layer) saat UX belum matang. Abstraksi trait tetap dari awal supaya 20D nyusul mulus.
+
+### 19.8 Tantangan & risiko (catat di awal)
+
+| Tantangan | Solusi |
+|---|---|
+| Presisi angka JS (BIGINT/DECIMAL) | kirim sebagai **string** dari Rust |
+| Tipe biner (BLOB/bytea) | hex/base64 + badge + download, bukan render mentah |
+| Edit tanpa PK | deteksi PK dulu; disable inline-edit bila tak ada, arahkan ke SQL |
+| Hasil besar | pagination + grid virtualized; jangan tarik semua |
+| Password di `ps aux` saat dump | `--defaults-extra-file` (MySQL) / `.pgpass`/env (Postgres), perm 600, hapus |
+| Postgres beda hierarki | layer schema di tree + reconnect per-database |
+| Multi-statement SQL (DELIMITER, string berisi `;`) | andalkan multi-statement driver / eksekusi per-statement; jangan split naif pada `;` |
+| Sesi SSH ditutup saat panel DB buka | anchor ke `sessionId` (bukan channel), tutup pool saat sesi mati; pola dari Fase 19-T3 |
+| SQL injection di UPDATE/DELETE generated | parameterisasi + quote identifier per-engine |
+
+### 19.9 Keputusan yang masih terbuka (sebelum mulai Fase 20A)
+
+1. ⬜ **Crate driver**: `sqlx` (unified) vs `mysql_async` + `tokio-postgres` (kontrol tipe lebih detail) — putuskan setelah spike tipe-mapping di awal 20A.
+2. ⬜ **Grid**: pakai lib data-grid (virtualized) apa, atau bangun ringan sendiri.
+3. ⬜ **Scope export awal**: cukup "seluruh database" dulu, atau langsung dengan pilih-tabel + struktur/data-only.
+
+**Status:** rancangan tercatat & disetujui garis besarnya (diskusi 2026-07-24). **Belum ada kode.** Mulai Fase 20A setelah user memberi lampu hijau.

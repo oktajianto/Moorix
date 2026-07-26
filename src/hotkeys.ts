@@ -17,6 +17,7 @@ export const HOTKEY_ACTIONS: HotkeyAction[] = [
   { id: "paste", label: "Paste from clipboard", defaults: ["Ctrl-Shift-V", "Shift-Insert"] },
   { id: "select-all", label: "Select all", defaults: ["Ctrl-Shift-A"] },
   { id: "clear", label: "Clear terminal", defaults: [] },
+  { id: "find", label: "Find in terminal", defaults: ["Ctrl-F"] },
   // Zoom
   { id: "zoom-in", label: "Zoom in", defaults: ["Ctrl-=", "Ctrl-Shift-="] },
   { id: "zoom-out", label: "Zoom out", defaults: ["Ctrl--", "Ctrl-Shift--"] },
@@ -45,7 +46,7 @@ export const HOTKEY_ACTIONS: HotkeyAction[] = [
 ];
 
 export type HotkeyId =
-  | "copy" | "paste" | "select-all" | "clear"
+  | "copy" | "paste" | "select-all" | "clear" | "find"
   | "zoom-in" | "zoom-out" | "reset-zoom"
   | "new-tab" | "close-tab" | "next-tab" | "previous-tab"
   | "tab-1" | "tab-2" | "tab-3" | "tab-4" | "tab-5"

@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal, type FontWeight } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
+import { TerminalSearch } from "./TerminalSearch";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
@@ -48,10 +50,14 @@ type PaneEntry = {
   term: Terminal;
   fit: FitAddon;
   serialize: SerializeAddon;
+  search: SearchAddon;
   webgl: Ref<WebglAddon | null>;
   sessionId: Ref<string | null>;
   options: Ref<TermOptions>;
   settings: Ref<Settings>;
+  /** Open the pane's Find bar. Registered by the mounted React component; null
+   *  while the pane isn't mounted. Called via `openPaneSearch`. */
+  openSearch: Ref<(() => void) | null>;
   /** Send text to the backend session (used by paste hotkeys). */
   write: (data: string) => void;
   /** Full teardown: close session, stop the reconnect listener, dispose xterm. */
@@ -96,6 +102,10 @@ export function clearPane(paneId: string): void {
 }
 export function selectAllPane(paneId: string): void {
   POOL.get(paneId)?.term.selectAll();
+}
+/** Open the Find bar on a pane (Ctrl+F). No-op if the pane isn't mounted. */
+export function openPaneSearch(paneId: string): void {
+  POOL.get(paneId)?.openSearch.current?.();
 }
 /** The backend session id currently bound to a pane (null if not connected). */
 export function paneSessionId(paneId: string): string | null {
@@ -305,8 +315,10 @@ function createEntry(
 
   const fit = new FitAddon();
   const serialize = new SerializeAddon();
+  const search = new SearchAddon();
   term.loadAddon(fit);
   term.loadAddon(serialize);
+  term.loadAddon(search);
   term.loadAddon(
     new WebLinksAddon((event: MouseEvent, uri: string) => {
       if (settingsRef.current.requireKeyToClickLinks && !event.ctrlKey && !event.metaKey) return;
@@ -477,10 +489,12 @@ function createEntry(
     term,
     fit,
     serialize,
+    search,
     webgl: webglRef,
     sessionId,
     options: optionsRef,
     settings: settingsRef,
+    openSearch: { current: null },
     write: sendData,
     dispose,
   };
@@ -505,6 +519,9 @@ export function TerminalView({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<PaneEntry | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Bumped on every Ctrl+F so re-pressing while open re-focuses the Find input.
+  const [searchSignal, setSearchSignal] = useState(0);
 
   const { settings } = useSettings();
 
@@ -522,6 +539,13 @@ export function TerminalView({
       container.appendChild(entry.term.element);
     }
     entryRef.current = entry;
+
+    // Expose "open Find bar" to the global hotkey dispatcher for this pane.
+    // Re-opening while already open re-focuses the input (via the bumped signal).
+    entry.openSearch.current = () => {
+      setSearchOpen(true);
+      setSearchSignal((n) => n + 1);
+    };
 
     const doFit = () => {
       // Skip while hidden (background tab / collapsed) — the container is 0-sized.
@@ -544,7 +568,10 @@ export function TerminalView({
 
     // Only the observer is torn down here — the terminal/session stay alive in
     // the pool. Real teardown happens via disposePane() when the pane closes.
-    return () => resizeObserver.disconnect();
+    return () => {
+      resizeObserver.disconnect();
+      entry!.openSearch.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId]);
 
@@ -599,5 +626,28 @@ export function TerminalView({
     }
   }, [settings, options]);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  const entry = entryRef.current;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" />
+      {searchOpen && entry && (
+        <TerminalSearch
+          key={paneId}
+          term={entry.term}
+          search={entry.search}
+          openSignal={searchSignal}
+          accent={accentColor()}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Current theme accent (`--m-accent`) for search-match highlighting. */
+function accentColor(): string {
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue("--m-accent")
+    .trim();
+  return v || "#3b82f6";
 }

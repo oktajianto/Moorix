@@ -21,6 +21,7 @@ import {
   Server,
   Loader2,
   LinkIcon,
+  ChevronDown,
 } from "lucide-react";
 
 /** Pick an icon by file extension. */
@@ -79,6 +80,26 @@ const parentPath = (p: string): string => {
   const i = t.lastIndexOf("/");
   if (i < 0) return t; // e.g. Windows drive "C:" — stay put
   return i === 0 ? "/" : t.slice(0, i);
+};
+
+/** The current folder plus every ancestor up to the root, nearest first — e.g.
+ *  "/a/b/c" → ["/a/b/c", "/a/b", "/a", "/"]. Built by walking `parentPath`, so
+ *  it stops sensibly at "/" (remote) or a drive root like "C:" (local). Feeds
+ *  the address-bar dropdown so users jump up many levels in one click. */
+const ancestors = (p: string): string[] => {
+  const start = p.replace(/\/+$/, "") || p;
+  if (!start) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let node = start;
+  while (node && !seen.has(node)) {
+    seen.add(node);
+    out.push(node);
+    const par = parentPath(node);
+    if (!par || par === node) break;
+    node = par;
+  }
+  return out;
 };
 
 const sortEntries = (a: Entry[]): Entry[] =>
@@ -565,7 +586,10 @@ export function SftpPanel({
               setLocalPath(parentPath(localPath));
             }}
             onRefresh={() => loadLocal(localPath)}
-            onPath={setLocalPath}
+            onPath={(p) => {
+              setSelLocal(new Set());
+              setLocalPath(p);
+            }}
             transfer={{
               Icon: ArrowDownToLine,
               title: "Upload selected to remote",
@@ -626,7 +650,10 @@ export function SftpPanel({
               setRemotePath(parentPath(remotePath));
             }}
             onRefresh={() => sftpId && loadRemote(sftpId, remotePath)}
-            onPath={setRemotePath}
+            onPath={(p) => {
+              setSelRemote(new Set());
+              setRemotePath(p);
+            }}
             transfer={{
               Icon: ArrowUpToLine,
               title: "Download selected to local",
@@ -936,6 +963,25 @@ function FileHalf({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(path);
   const [dragOver, setDragOver] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close the folder dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [menuOpen]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -963,34 +1009,80 @@ function FileHalf({
         >
           <transfer.Icon className="h-3.5 w-3.5" />
         </button>
-        {editing ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => setEditing(false)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                onPath(draft.trim() || path);
-                setEditing(false);
-              } else if (e.key === "Escape") setEditing(false);
-            }}
-            className="min-w-0 flex-1 rounded border px-2 py-0.5 text-[11px] outline-none focus:border-cyan-500"
-            style={{ background: "var(--m-input)", borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
-          />
-        ) : (
-          <button
-            onClick={() => {
-              setDraft(path);
-              setEditing(true);
-            }}
-            title={path}
-            className="min-w-0 flex-1 truncate rounded px-2 py-0.5 text-left text-[11px] hover:bg-black/10"
-            style={{ color: "var(--m-text)" }}
-          >
-            {path || "…"}
-          </button>
-        )}
+        <div ref={menuRef} className="relative flex min-w-0 flex-1 items-center gap-0.5">
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => setEditing(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onPath(draft.trim() || path);
+                  setEditing(false);
+                } else if (e.key === "Escape") setEditing(false);
+              }}
+              className="min-w-0 flex-1 rounded border px-2 py-0.5 text-[11px] outline-none focus:border-cyan-500"
+              style={{ background: "var(--m-input)", borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+            />
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  setDraft(path);
+                  setEditing(true);
+                }}
+                title={path}
+                className="min-w-0 flex-1 truncate rounded px-2 py-0.5 text-left text-[11px] hover:bg-black/10"
+                style={{ color: "var(--m-text)" }}
+              >
+                {path || "…"}
+              </button>
+              <button
+                onClick={() => setMenuOpen((o) => !o)}
+                title="Jump to a parent folder"
+                disabled={disabled}
+                className="shrink-0 rounded p-1 hover:bg-black/10 disabled:opacity-30"
+                style={{ color: "var(--m-muted)" }}
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+
+          {/* Parent-folder dropdown: jump up many levels in one click. */}
+          {menuOpen && !editing && (
+            <div
+              className="absolute right-0 top-full z-30 mt-1 max-h-64 min-w-[12rem] max-w-[90vw] overflow-y-auto rounded-md border py-1 shadow-lg"
+              style={{ background: "var(--m-panel)", borderColor: "var(--m-border)" }}
+            >
+              {ancestors(path).map((a, idx) => {
+                const isCurrent = idx === 0;
+                return (
+                  <button
+                    key={a}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (!isCurrent) onPath(a);
+                    }}
+                    title={a}
+                    className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-[11px] hover:bg-black/10"
+                    style={{ color: isCurrent ? "var(--m-muted)" : "var(--m-text)" }}
+                  >
+                    <Folder className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--m-muted)" }} />
+                    <span className="truncate">{baseName(a) || a}</span>
+                    {isCurrent && (
+                      <span className="ml-auto shrink-0 text-[10px]" style={{ color: "var(--m-muted)" }}>
+                        current
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Listing — also a drop target for cross-pane drag + OS file drops. */}
