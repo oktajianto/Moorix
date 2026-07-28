@@ -296,6 +296,10 @@ function createEntry(
   const settingsRef: Ref<Settings> = { current: settings };
 
   const term = new Terminal({
+    // Search-match highlighting uses registerMarker/registerDecoration, which are
+    // xterm "proposed API" — without this the SearchAddon throws on every search
+    // (crashing the whole React tree → blank/black window).
+    allowProposedApi: true,
     fontFamily: effectiveFontFamily(settings),
     fontSize: settings.fontSize,
     fontWeight: settings.normalFontWeight as FontWeight,

@@ -96,15 +96,31 @@ export function TerminalSearch({
       }
     }
     setInvalid(false);
-    search.findNext(query, { ...optsRef.current, incremental: true });
+    // Guard: a search-addon error must never bubble out of this effect, or React
+    // tears down the whole app (blank window). Degrade to "no results" instead.
+    try {
+      search.findNext(query, { ...optsRef.current, incremental: true });
+    } catch {
+      setResult({ index: -1, count: 0 });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, caseSensitive, wholeWord, regex]);
 
   const findNext = () => {
-    if (query) search.findNext(query, optsRef.current);
+    if (!query) return;
+    try {
+      search.findNext(query, optsRef.current);
+    } catch {
+      /* ignore — see guard above */
+    }
   };
   const findPrevious = () => {
-    if (query) search.findPrevious(query, optsRef.current);
+    if (!query) return;
+    try {
+      search.findPrevious(query, optsRef.current);
+    } catch {
+      /* ignore — see guard above */
+    }
   };
 
   const close = () => {
