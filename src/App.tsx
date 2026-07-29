@@ -15,6 +15,10 @@ import {
   paneSessionId,
 } from "./components/TerminalView";
 import { SftpPanel } from "./components/SftpPanel";
+import { DbConnectTest } from "./components/DbConnectTest";
+import { DbPicker } from "./components/DbPicker";
+import { DatabasePanel } from "./components/DatabasePanel";
+import { dbOpen, dbClose, type DBProfile } from "./db";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { eventToCombo, buildComboMap, isCapturingHotkey } from "./hotkeys";
 import { Panes } from "./components/SplitPane";
@@ -56,7 +60,7 @@ import {
 import { IS_MOBILE } from "./platform";
 
 type EditorIntent =
-  | { mode: "save"; initial: UserProfile }
+  | { mode: "save"; initial: UserProfile; initialTab?: "databases" }
   | { mode: "connect-tab"; initial: UserProfile; tabId: string }
   | { mode: "connect-new"; initial: UserProfile };
 
@@ -73,7 +77,8 @@ import { scheduleAutoPush } from "./cloudSync";
 type Tab =
   | { id: string; kind: "launcher" }
   | { id: string; kind: "terminal"; root: PaneNode; desc?: TabDesc }
-  | { id: string; kind: "settings" };
+  | { id: string; kind: "settings" }
+  | { id: string; kind: "db"; dbSessionId: string; sshSessionId: string; title: string };
 
 /** Rebuild an OpenSession + label from a persisted tab descriptor. Returns null
  *  if the referenced SSH profile no longer exists. */
@@ -122,6 +127,10 @@ function App() {
   });
   const [sftpTabs, setSftpTabs] = useState<Record<string, string>>({});
   const [sftpWidths, setSftpWidths] = useState<Record<string, number>>({});
+  // Fase 20A-1: pane whose manual DB quick-connect dialog is open (null = none).
+  const [dbTestPane, setDbTestPane] = useState<string | null>(null);
+  // Fase 20A-2: pane whose DB picker is open, with its SSH profile id (if saved).
+  const [dbPicker, setDbPicker] = useState<{ paneId: string; profileId: string | null } | null>(null);
   const [hostKeyReqs, setHostKeyReqs] = useState<HostKeyReq[]>([]);
   const [mismatch, setMismatch] = useState<{ host: string; fingerprint: string } | null>(null);
   const [showWelcome, setShowWelcome] = useState(
@@ -311,7 +320,15 @@ function App() {
   const saveProfile = (p: UserProfile) => {
     // Never persist the plaintext password in the store — put it in the OS keychain.
     const password = p.ssh.password;
-    const stored: UserProfile = { ...p, ssh: { ...p.ssh, password: "" } };
+    // DB child passwords are vault-backed too (keyed by each DB profile id) and
+    // stripped from the stored profile, same as the SSH password.
+    const dbs = p.databases ?? [];
+    const storedDbs = dbs.map((d) => ({ ...d, password: "" }));
+    const stored: UserProfile = {
+      ...p,
+      ssh: { ...p.ssh, password: "" },
+      databases: storedDbs,
+    };
     const exists = userProfiles.some((x) => x.id === p.id);
     persistProfiles(
       exists
@@ -321,11 +338,19 @@ function App() {
     if (password) {
       void secretSet(p.id, password).catch(() => {});
     }
+    for (const d of dbs) {
+      // Only write when a new password was typed; blank keeps the vault entry.
+      if (d.password) void secretSet(d.id, d.password).catch(() => {});
+    }
   };
 
   const deleteProfile = (id: string) => {
+    const gone = userProfiles.find((x) => x.id === id);
     persistProfiles(userProfiles.filter((x) => x.id !== id));
     void secretDelete(id).catch(() => {});
+    for (const d of gone?.databases ?? []) {
+      void secretDelete(d.id).catch(() => {});
+    }
   };
 
   const setDefaultProfile = (id: string) => {
@@ -502,6 +527,22 @@ function App() {
       return next;
     });
 
+  // --- Database manager (Fase 20A-3) -----------------------------------------
+
+  /** Open a persistent DB session on the pane's SSH connection and add a
+   *  Database tab bound to it. Throws (surfaced by the picker) on failure. */
+  const openDbTab = async (paneId: string, db: DBProfile) => {
+    const sid = paneSessionId(paneId);
+    if (!sid) throw new Error("No active SSH session on this pane.");
+    const dbSessionId = await dbOpen(sid, db);
+    const id = nextId();
+    setTabs((prev) => [
+      ...prev,
+      { id, kind: "db", dbSessionId, sshSessionId: sid, title: db.name || "Database" },
+    ]);
+    setActiveId(id);
+  };
+
   // Drag the divider between the terminal and the SFTP panel (panel is on the
   // right, so dragging left widens it). Width is kept per tab.
   const startSftpResize = (e: React.PointerEvent, tabId: string) => {
@@ -556,6 +597,9 @@ function App() {
     if (closing?.kind === "terminal") {
       for (const leaf of allLeaves(closing.root)) disposePane(leaf.paneId);
     }
+    if (closing?.kind === "db") {
+      void dbClose(closing.dbSessionId);
+    }
     closeSftp(id);
     const idx = tabs.findIndex((t) => t.id === id);
     let next = tabs.filter((t) => t.id !== id);
@@ -579,7 +623,9 @@ function App() {
       ? (findLeaf(t.root, activePaneId) ?? firstLeaf(t.root)).label
       : t.kind === "settings"
         ? "Settings"
-        : "New tab";
+        : t.kind === "db"
+          ? t.title
+          : "New tab";
 
   // --- Global hotkeys -------------------------------------------------------
   // `runAction` is rebuilt every render so it closes over fresh state; the
@@ -700,6 +746,8 @@ function App() {
                   })
                 }
               />
+            ) : tab.kind === "db" ? (
+              <DatabasePanel dbSessionId={tab.dbSessionId} title={tab.title} />
             ) : tab.kind === "settings" ? (
               <SettingsPage
                 sectionRequest={settingsReq}
@@ -733,6 +781,12 @@ function App() {
                     focusFollowsMouse={settings.focusFollowsMouse}
                     isSsh={tab.desc?.t === "ssh"}
                     onOpenSftp={(paneId) => openSftpForPane(tab.id, paneId)}
+                    onOpenDb={(paneId) =>
+                      setDbPicker({
+                        paneId,
+                        profileId: tab.desc?.t === "ssh" ? tab.desc.profileId : null,
+                      })
+                    }
                   />
                 </div>
                 {sftpTabs[tab.id] && (
@@ -756,11 +810,39 @@ function App() {
         ))}
 
         {showWelcome && <Welcome onClose={dismissWelcome} />}
+        {dbPicker && (
+          <DbPicker
+            paneId={dbPicker.paneId}
+            profile={userProfiles.find((u) => u.id === dbPicker.profileId) ?? null}
+            onClose={() => setDbPicker(null)}
+            onConnect={async (db) => {
+              await openDbTab(dbPicker.paneId, db);
+              setDbPicker(null);
+            }}
+            onQuickConnect={() => {
+              setDbTestPane(dbPicker.paneId);
+              setDbPicker(null);
+            }}
+            onManage={
+              dbPicker.profileId
+                ? () => {
+                    const prof = userProfiles.find((u) => u.id === dbPicker.profileId);
+                    if (prof) setEditor({ mode: "save", initial: prof, initialTab: "databases" });
+                    setDbPicker(null);
+                  }
+                : null
+            }
+          />
+        )}
+        {dbTestPane && (
+          <DbConnectTest paneId={dbTestPane} onClose={() => setDbTestPane(null)} />
+        )}
       </main>
 
       {editor && (
         <ProfileEditor
           initial={editor.initial}
+          initialTab={editor.mode === "save" ? editor.initialTab : undefined}
           groups={groups}
           userProfiles={userProfiles}
           onSave={onEditorSave}

@@ -1,4 +1,5 @@
 mod commands;
+mod db;
 mod forward;
 mod cloud_auth;
 mod localfs;
@@ -92,6 +93,24 @@ pub fn run() {
             cloud_auth::drive_upload_appdata,
             cloud_auth::drive_download_appdata,
             cloud_auth::drive_appdata_modified,
+            db::db_test_connect,
+            db::db_open,
+            db::db_list_databases,
+            db::db_list_tables,
+            db::db_close,
+            db::db_run_sql,
+            db::db_browse,
+            db::db_schema,
+            db::db_table_structure,
+            db::db_update_row,
+            db::db_delete_row,
+            db::db_insert_row,
+            db::db_export_sql,
+            db::db_import_sql,
+            db::db_drop_table,
+            db::db_rename_table,
+            db::db_drop_database,
+            db::db_rename_database,
             open_devtools,
         ])
         .run(tauri::generate_context!())

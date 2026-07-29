@@ -9,6 +9,7 @@ use tokio::sync::oneshot;
 use crate::pty::PtySession;
 #[cfg(desktop)]
 use crate::serial::SerialSession;
+use crate::db::DbSession;
 use crate::ssh::{SshHandle, SshSession};
 use crate::telnet::TelnetSession;
 
@@ -74,6 +75,9 @@ pub struct AppState {
     host_key_counter: AtomicU64,
     pending_host_keys: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
     ssh_pool: Mutex<HashMap<String, SshHandle>>,
+    /// Live database sessions (Fase 20), keyed by their own id. Each rides an
+    /// SSH session's tunnel; closing that SSH session drops these too.
+    db_sessions: Mutex<HashMap<String, Arc<DbSession>>>,
 }
 
 impl AppState {
@@ -121,6 +125,23 @@ impl AppState {
         if let Some(mut session) = self.sessions.lock().unwrap().remove(id) {
             session.kill();
         }
+        // Tear down any DB sessions riding this SSH session (drop → tunnel abort).
+        self.db_sessions
+            .lock()
+            .unwrap()
+            .retain(|_, s| s.parent_ssh != id);
+    }
+
+    pub fn insert_db(&self, id: String, session: Arc<DbSession>) {
+        self.db_sessions.lock().unwrap().insert(id, session);
+    }
+
+    pub fn db_session(&self, id: &str) -> Option<Arc<DbSession>> {
+        self.db_sessions.lock().unwrap().get(id).cloned()
+    }
+
+    pub fn remove_db(&self, id: &str) -> Option<Arc<DbSession>> {
+        self.db_sessions.lock().unwrap().remove(id)
     }
 
     /// A clone of an SSH session's connection handle, for opening an SFTP

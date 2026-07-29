@@ -3,6 +3,7 @@ import {
   SquareSplitHorizontal,
   SquareSplitVertical,
   FolderOpen,
+  Database,
   X,
 } from "lucide-react";
 import { TerminalView } from "./TerminalView";
@@ -20,6 +21,8 @@ type PaneActions = {
   /** SSH tabs only: show a folder button that opens the SFTP file manager. */
   isSsh?: boolean;
   onOpenSftp?: (id: string) => void;
+  /** SSH tabs only: open the database manager (Fase 20A-1 test connect). */
+  onOpenDb?: (id: string) => void;
 };
 
 /**
@@ -54,6 +57,14 @@ export function Panes({
               onClick={() => actions.onOpenSftp!(node.paneId)}
             >
               <FolderOpen size={14} />
+            </PaneButton>
+          )}
+          {actions.isSsh && actions.onOpenDb && (
+            <PaneButton
+              title="Database"
+              onClick={() => actions.onOpenDb!(node.paneId)}
+            >
+              <Database size={14} />
             </PaneButton>
           )}
           <PaneButton

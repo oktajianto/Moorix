@@ -16,6 +16,7 @@ import type { OpenSession, TermOptions } from "./components/TerminalView";
 import { IS_MOBILE } from "./platform";
 import { getStore } from "./store";
 import { secretGet } from "./secrets";
+import type { DBProfile } from "./db";
 
 export type ProfileType = "local" | "ssh";
 
@@ -170,6 +171,9 @@ export type UserProfile = {
   ssh: SshOptions;
   serial?: SerialOptions;
   telnet?: TelnetOptions;
+  /** Database connections riding this profile's SSH tunnel (Fase 20). Passwords
+   *  live in the vault (keyed by each DBProfile id), stripped from the store. */
+  databases?: DBProfile[];
 };
 
 /** Algorithm options for the CIPHERS tab. */
@@ -262,6 +266,7 @@ export function createNewProfile(group: string, type: "ssh" | "serial" | "telnet
     whenSessionEnds: "close",
     clearTerminal: false,
     ssh: structuredClone(defaultSshOptions()),
+    databases: [],
   };
 
   if (type === "serial") {
@@ -281,6 +286,13 @@ export function cloneProfile(p: UserProfile): UserProfile {
     ...p,
     id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: p.name ? `${p.name} (copy)` : "Untitled (copy)",
+    // DB children get fresh ids and drop their vault-backed passwords (the copy
+    // starts without them, like the SSH password).
+    databases: (p.databases ?? []).map((d) => ({
+      ...d,
+      id: crypto.randomUUID(),
+      password: "",
+    })),
   };
 
   if (p.type === "ssh" && p.ssh) {

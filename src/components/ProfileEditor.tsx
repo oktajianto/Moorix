@@ -9,6 +9,8 @@ import {
   Trash2,
   Plus,
   ArrowRight,
+  Database,
+  Pencil,
 } from "lucide-react";
 import {
   CIPHER_OPTIONS,
@@ -23,13 +25,22 @@ import {
   type SerialOptions,
   type TelnetOptions,
 } from "../profiles";
+import {
+  DB_ENGINES,
+  createDbProfile,
+  defaultPortFor,
+  engineLabel,
+  type DBProfile,
+  type DbEngine,
+} from "../db";
 import { getTheme, THEME_NAMES } from "../themes";
 
-type TabId = "general" | "ports" | "advanced" | "ciphers" | "colors" | "login" | "input";
+type TabId = "general" | "ports" | "databases" | "advanced" | "ciphers" | "colors" | "login" | "input";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "GENERAL" },
   { id: "ports", label: "PORTS" },
+  { id: "databases", label: "DATABASES" },
   { id: "advanced", label: "ADVANCED" },
   { id: "ciphers", label: "CIPHERS" },
   { id: "colors", label: "COLORS" },
@@ -47,19 +58,21 @@ const inputCls =
 
 export function ProfileEditor({
   initial,
+  initialTab,
   groups,
   userProfiles,
   onSave,
   onCancel,
 }: {
   initial: UserProfile;
+  initialTab?: TabId;
   groups: string[];
   userProfiles: UserProfile[];
   onSave: (p: UserProfile) => void;
   onCancel: () => void;
 }) {
   const [p, setP] = useState<UserProfile>(initial);
-  const [tab, setTab] = useState<TabId>("general");
+  const [tab, setTab] = useState<TabId>(initialTab ?? "general");
 
   const set = (patch: Partial<UserProfile>) => setP((v) => ({ ...v, ...patch }));
   const setSsh = (patch: Partial<SshOptions>) =>
@@ -81,6 +94,8 @@ export function ProfileEditor({
 
   const setTelnet = (patch: Partial<TelnetOptions>) =>
     setP((v) => ({ ...v, telnet: { ...v.telnet!, ...patch } }));
+
+  const setDatabases = (databases: UserProfile["databases"]) => set({ databases });
 
   const availableTabs = TABS.filter((t) => {
     if (p.type === "serial") return ["general", "colors", "input"].includes(t.id);
@@ -227,6 +242,9 @@ export function ProfileEditor({
               <GeneralTab p={p} setSsh={setSsh} />
             )}
             {tab === "ports" && p.type === "ssh" && <PortsTab p={p} setSsh={setSsh} />}
+            {tab === "databases" && p.type === "ssh" && (
+              <DatabasesTab p={p} setDatabases={setDatabases} />
+            )}
             {tab === "advanced" && p.type === "ssh" && (
               <AdvancedTab p={p} setAdv={setAdv} userProfiles={userProfiles} />
             )}
@@ -419,6 +437,207 @@ function PortsTab({
             <span>{f.bindHost}:{f.bindPort} → {f.host}:{f.port}</span>
             {f.description && <span style={{ color: "var(--m-muted)" }}>({f.description})</span>}
             <button onClick={() => setSsh({ ports: p.ssh.ports.filter((_, j) => j !== i) })} className="ml-auto">
+              <Trash2 className="h-4 w-4" style={{ color: "#ef4444" }} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DatabasesTab({
+  p,
+  setDatabases,
+}: {
+  p: UserProfile;
+  setDatabases: (dbs: DBProfile[]) => void;
+}) {
+  const dbs = p.databases ?? [];
+  const [editing, setEditing] = useState<DBProfile | null>(null);
+  const [isNew, setIsNew] = useState(false);
+
+  const startAdd = () => {
+    setEditing(createDbProfile());
+    setIsNew(true);
+  };
+  const startEdit = (d: DBProfile) => {
+    setEditing({ ...d });
+    setIsNew(false);
+  };
+  const remove = (id: string) => setDatabases(dbs.filter((d) => d.id !== id));
+
+  const save = () => {
+    if (!editing) return;
+    const clean: DBProfile = { ...editing, name: editing.name.trim() || "Untitled DB" };
+    setDatabases(
+      dbs.some((d) => d.id === clean.id)
+        ? dbs.map((d) => (d.id === clean.id ? clean : d))
+        : [...dbs, clean],
+    );
+    setEditing(null);
+  };
+
+  const setE = (patch: Partial<DBProfile>) =>
+    setEditing((v) => (v ? { ...v, ...patch } : v));
+
+  const onEngine = (engine: DbEngine) => {
+    // Snap the port to the engine default unless the user set a custom one.
+    setEditing((v) => {
+      if (!v) return v;
+      const wasDefault = v.port === defaultPortFor(v.engine);
+      return { ...v, engine, port: wasDefault ? defaultPortFor(engine) : v.port };
+    });
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <p className="mb-4 text-sm" style={{ color: "var(--m-muted)" }}>
+        Database connections that ride this SSH tunnel. Credentials are stored in
+        the vault; the SSH half is inherited from this profile.
+      </p>
+
+      {editing ? (
+        <div
+          className="mb-4 rounded-md border p-4"
+          style={{ borderColor: "var(--m-input-border)" }}
+        >
+          <Label>Name</Label>
+          <input
+            className={`${inputCls} mb-3 w-full`}
+            style={inputStyle}
+            value={editing.name}
+            onChange={(e) => setE({ name: e.target.value })}
+            placeholder="app-prod (root)"
+          />
+
+          <Label>Engine</Label>
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            {DB_ENGINES.map((eng) => {
+              const active = editing.engine === eng.id;
+              return (
+                <button
+                  key={eng.id}
+                  onClick={() => onEngine(eng.id)}
+                  className="rounded-md border py-2 text-xs"
+                  style={{
+                    borderColor: active ? "#06b6d4" : "var(--m-input-border)",
+                    background: active ? "var(--m-hover)" : "transparent",
+                    color: "var(--m-text)",
+                  }}
+                >
+                  {eng.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mb-3 flex gap-3">
+            <div className="flex-1">
+              <Label>Host (from server)</Label>
+              <input
+                className={`${inputCls} w-full`}
+                style={inputStyle}
+                value={editing.host}
+                onChange={(e) => setE({ host: e.target.value })}
+                placeholder="127.0.0.1"
+              />
+            </div>
+            <div className="w-24">
+              <Label>Port</Label>
+              <input
+                className={`${inputCls} w-full`}
+                style={inputStyle}
+                value={editing.port}
+                onChange={(e) => setE({ port: Number(e.target.value) || defaultPortFor(editing.engine) })}
+              />
+            </div>
+          </div>
+
+          <div className="mb-3 flex gap-3">
+            <div className="flex-1">
+              <Label>DB user</Label>
+              <input
+                className={`${inputCls} w-full`}
+                style={inputStyle}
+                value={editing.dbUser}
+                onChange={(e) => setE({ dbUser: e.target.value })}
+              />
+            </div>
+            <div className="flex-1">
+              <Label>DB password</Label>
+              <input
+                type="password"
+                className={`${inputCls} w-full`}
+                style={inputStyle}
+                value={editing.password}
+                onChange={(e) => setE({ password: e.target.value })}
+                placeholder={isNew ? "" : "•••••• (leave blank to keep)"}
+              />
+            </div>
+          </div>
+
+          <Label>Default database (optional)</Label>
+          <input
+            className={`${inputCls} mb-4 w-full`}
+            style={inputStyle}
+            value={editing.defaultDatabase}
+            onChange={(e) => setE({ defaultDatabase: e.target.value })}
+          />
+
+          <div className="flex gap-2">
+            <button
+              onClick={save}
+              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-500"
+            >
+              {isNew ? "Add" : "Save"}
+            </button>
+            <button
+              onClick={() => setEditing(null)}
+              className="rounded-md border px-4 py-1.5 text-sm"
+              style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={startAdd}
+          className="mb-4 flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm"
+          style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+        >
+          <Plus className="h-4 w-4" /> Add database connection
+        </button>
+      )}
+
+      <div className="flex flex-col gap-1.5">
+        {dbs.length === 0 && !editing && (
+          <div className="text-xs" style={{ color: "var(--m-muted)" }}>
+            No database connections yet.
+          </div>
+        )}
+        {dbs.map((d) => (
+          <div
+            key={d.id}
+            className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+            style={{ borderColor: "var(--m-border)", color: "var(--m-text)" }}
+          >
+            <Database className="h-4 w-4" style={{ color: "var(--m-accent)" }} />
+            <span className="font-medium">{d.name}</span>
+            <span
+              className="rounded px-1.5 py-0.5 text-[10px] uppercase"
+              style={{ background: "var(--m-hover)", color: "var(--m-muted)" }}
+            >
+              {engineLabel(d.engine)}
+            </span>
+            <span className="text-xs" style={{ color: "var(--m-muted)" }}>
+              {d.dbUser}@{d.host}:{d.port}
+            </span>
+            <button onClick={() => startEdit(d)} className="ml-auto" title="Edit">
+              <Pencil className="h-4 w-4" style={{ color: "var(--m-muted)" }} />
+            </button>
+            <button onClick={() => remove(d.id)} title="Delete">
               <Trash2 className="h-4 w-4" style={{ color: "#ef4444" }} />
             </button>
           </div>
