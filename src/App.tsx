@@ -78,7 +78,7 @@ type Tab =
   | { id: string; kind: "launcher" }
   | { id: string; kind: "terminal"; root: PaneNode; desc?: TabDesc }
   | { id: string; kind: "settings" }
-  | { id: string; kind: "db"; dbSessionId: string; sshSessionId: string; title: string };
+  | { id: string; kind: "db"; dbSessionId: string; sshSessionId: string; title: string; engine: string };
 
 /** Rebuild an OpenSession + label from a persisted tab descriptor. Returns null
  *  if the referenced SSH profile no longer exists. */
@@ -538,7 +538,7 @@ function App() {
     const id = nextId();
     setTabs((prev) => [
       ...prev,
-      { id, kind: "db", dbSessionId, sshSessionId: sid, title: db.name || "Database" },
+      { id, kind: "db", dbSessionId, sshSessionId: sid, title: db.name || "Database", engine: db.engine },
     ]);
     setActiveId(id);
   };
@@ -747,7 +747,7 @@ function App() {
                 }
               />
             ) : tab.kind === "db" ? (
-              <DatabasePanel dbSessionId={tab.dbSessionId} title={tab.title} />
+              <DatabasePanel dbSessionId={tab.dbSessionId} title={tab.title} engine={tab.engine} />
             ) : tab.kind === "settings" ? (
               <SettingsPage
                 sectionRequest={settingsReq}
@@ -882,12 +882,30 @@ function App() {
             <p className="mt-2 break-all text-xs" style={{ color: "var(--m-muted)" }}>
               New fingerprint: {mismatch.fingerprint}
             </p>
-            <div className="mt-5 flex justify-end">
+            <p className="mt-3 text-xs" style={{ color: "var(--m-muted)" }}>
+              If you rebuilt this server or its IP was reassigned, this is
+              expected — choose <b>Trust new key</b>, then reconnect. Only do this
+              if you recognise the server.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
               <button
                 onClick={() => setMismatch(null)}
                 className="rounded-md bg-neutral-700 px-4 py-2 text-sm text-white transition hover:bg-neutral-600"
               >
                 Close
+              </button>
+              <button
+                onClick={async () => {
+                  await invoke("trust_host_key", {
+                    host: mismatch.host,
+                    fingerprint: mismatch.fingerprint,
+                  }).catch(() => {});
+                  setMismatch(null);
+                  window.alert("New host key saved. Reconnect to continue.");
+                }}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white transition hover:bg-blue-500"
+              >
+                Trust new key
               </button>
             </div>
           </div>

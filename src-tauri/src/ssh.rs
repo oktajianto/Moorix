@@ -379,6 +379,24 @@ fn save_known_hosts(app: &AppHandle, map: &HashMap<String, String>) {
     }
 }
 
+/// Accept a (possibly changed) host key: store `fingerprint` for `host` so the
+/// next connection matches. Called after the user confirms a host-key change in
+/// the UI (the equivalent of `ssh-keygen -R host` + accepting the new key).
+#[tauri::command]
+pub fn trust_host_key(app: AppHandle, host: String, fingerprint: String) {
+    let mut known = load_known_hosts(&app);
+    known.insert(host, fingerprint);
+    save_known_hosts(&app, &known);
+}
+
+/// Remove a saved host key so the next connection re-prompts (TOFU).
+#[tauri::command]
+pub fn forget_host_key(app: AppHandle, host: String) {
+    let mut known = load_known_hosts(&app);
+    known.remove(&host);
+    save_known_hosts(&app, &known);
+}
+
 /// Parse algorithm-name strings into russh `Name` types, skipping unknown ones.
 fn parse_names<T>(strs: &[String]) -> Vec<T>
 where

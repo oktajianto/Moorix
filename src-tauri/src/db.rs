@@ -154,22 +154,93 @@ pub async fn db_test_connect(
 /* Persistent DB session (20A-3): tunnel + connection pool, kept in AppState.  */
 /* -------------------------------------------------------------------------- */
 
-/// A live database session: a connection pool bound to a private tunnel. Both
-/// are torn down when this is dropped (pool closes its connections lazily; the
-/// tunnel task aborts). `parent_ssh` ties its lifetime to the SSH session — when
-/// that closes, `AppState` drops this too (no orphan tunnel).
+/// Lazily-connected PostgreSQL clients, one per database, over a shared tunnel.
+/// Postgres connections are per-database, so browsing another database opens a
+/// new (cached) client to `127.0.0.1:<local_port>` with dbname set.
+pub struct PgBackend {
+    local_port: u16,
+    user: String,
+    password: String,
+    /// Database to use for server-wide queries (e.g. listing databases).
+    default_db: String,
+    clients: tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio_postgres::Client>>>,
+}
+
+impl PgBackend {
+    /// Get (or open + cache) a client connected to `dbname`.
+    async fn client(&self, dbname: &str) -> Result<Arc<tokio_postgres::Client>, String> {
+        let mut map = self.clients.lock().await;
+        if let Some(c) = map.get(dbname) {
+            return Ok(c.clone());
+        }
+        let mut cfg = tokio_postgres::Config::new();
+        cfg.host("127.0.0.1")
+            .port(self.local_port)
+            .user(&self.user)
+            .password(&self.password)
+            .dbname(dbname);
+        let (client, connection) = cfg
+            .connect(tokio_postgres::NoTls)
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        // Drive the connection in the background for the client's lifetime.
+        tauri::async_runtime::spawn(async move {
+            let _ = connection.await;
+        });
+        let arc = Arc::new(client);
+        map.insert(dbname.to_string(), arc.clone());
+        Ok(arc)
+    }
+
+    /// Drop the cached client for `dbname` (closing that connection once the last
+    /// reference goes away), so the database can be dropped/renamed — Postgres
+    /// refuses those while a session is connected to it.
+    async fn close_db(&self, dbname: &str) {
+        self.clients.lock().await.remove(dbname);
+    }
+}
+
+/// The live driver behind a session: MySQL pool, or per-database Postgres clients.
+pub enum DbBackend {
+    Mysql(mysql_async::Pool),
+    Postgres(PgBackend),
+}
+
+/// A live database session bound to a private tunnel. Torn down on drop (MySQL
+/// pool closes lazily / Postgres clients drop; the tunnel task aborts).
+/// `parent_ssh` ties its lifetime to the SSH session.
 pub struct DbSession {
     /// SSH session id this DB session rides on.
     pub parent_ssh: String,
-    pool: mysql_async::Pool,
+    backend: DbBackend,
     /// Kept alive for the session's lifetime; aborts on drop.
     _tunnel: DbTunnel,
-    /// DB credentials (as seen from the server) — reused by mysqldump/mysql for
-    /// export/import so the frontend never re-sends the password.
+    /// "mysql" | "mariadb" | "postgres" — drives quoting + dump tool choice.
+    pub engine: String,
+    /// DB credentials (as seen from the server) — reused by mysqldump/pg_dump
+    /// for export/import so the frontend never re-sends the password.
     db_user: String,
     db_password: String,
     db_host: String,
     db_port: u16,
+}
+
+impl DbSession {
+    fn mysql(&self) -> Result<&mysql_async::Pool, String> {
+        match &self.backend {
+            DbBackend::Mysql(p) => Ok(p),
+            _ => Err("not a MySQL/MariaDB session".to_string()),
+        }
+    }
+    fn pg(&self) -> Result<&PgBackend, String> {
+        match &self.backend {
+            DbBackend::Postgres(p) => Ok(p),
+            _ => Err("not a PostgreSQL session".to_string()),
+        }
+    }
+    fn is_pg(&self) -> bool {
+        matches!(self.backend, DbBackend::Postgres(_))
+    }
 }
 
 /// A table or view in a database (for the schema tree).
@@ -181,50 +252,64 @@ pub struct TableInfo {
     pub kind: String,
 }
 
-/// Open a persistent MySQL/MariaDB session over `session_id`'s SSH connection
-/// and return its id. Validates the credentials with a probe query before
-/// registering, so a bad login fails here rather than on first browse.
+/// Open a persistent DB session over `session_id`'s SSH connection and return
+/// its id. Validates the connection before registering so a bad login fails
+/// here. `engine` selects the driver ("postgres" vs mysql/mariadb).
 #[tauri::command]
 pub async fn db_open(
     state: State<'_, AppState>,
     session_id: String,
+    engine: String,
     host: String,
     port: u16,
     user: String,
     password: String,
     database: Option<String>,
 ) -> Result<String, String> {
-    use mysql_async::prelude::Queryable;
-
     let handle = state
         .ssh_handle(&session_id)
         .ok_or_else(|| "not an SSH session".to_string())?;
     let tunnel = open_tunnel(handle, host.clone(), port).await?;
 
-    let opts = mysql_async::OptsBuilder::default()
-        .ip_or_hostname("127.0.0.1")
-        .tcp_port(tunnel.local_port)
-        .prefer_socket(false)
-        .user(Some(user.clone()))
-        .pass(Some(password.clone()))
-        .db_name(database);
-    let pool = mysql_async::Pool::new(opts);
-
-    // Probe once so authentication errors surface immediately.
-    let mut conn = pool.get_conn().await.map_err(|e| format!("connect: {e}"))?;
-    let _: Option<String> = conn
-        .query_first("SELECT 1")
-        .await
-        .map_err(|e| format!("connect: {e}"))?;
-    drop(conn);
+    let backend = if engine == "postgres" {
+        let default_db = database.clone().unwrap_or_else(|| "postgres".to_string());
+        let pg = PgBackend {
+            local_port: tunnel.local_port,
+            user: user.clone(),
+            password: password.clone(),
+            default_db: default_db.clone(),
+            clients: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        };
+        // Probe: connect to the target database (or the default "postgres").
+        pg.client(&default_db).await?;
+        DbBackend::Postgres(pg)
+    } else {
+        use mysql_async::prelude::Queryable;
+        let opts = mysql_async::OptsBuilder::default()
+            .ip_or_hostname("127.0.0.1")
+            .tcp_port(tunnel.local_port)
+            .prefer_socket(false)
+            .user(Some(user.clone()))
+            .pass(Some(password.clone()))
+            .db_name(database);
+        let pool = mysql_async::Pool::new(opts);
+        let mut conn = pool.get_conn().await.map_err(|e| format!("connect: {e}"))?;
+        let _: Option<String> = conn
+            .query_first("SELECT 1")
+            .await
+            .map_err(|e| format!("connect: {e}"))?;
+        drop(conn);
+        DbBackend::Mysql(pool)
+    };
 
     let id = state.next_id();
     state.insert_db(
         id.clone(),
         Arc::new(DbSession {
             parent_ssh: session_id,
-            pool,
+            backend,
             _tunnel: tunnel,
+            engine,
             db_user: user,
             db_password: password,
             db_host: host,
@@ -234,35 +319,98 @@ pub async fn db_open(
     Ok(id)
 }
 
-/// `SHOW DATABASES` on a live session.
+/// List databases. MySQL: `SHOW DATABASES`. Postgres: `pg_database`.
 #[tauri::command]
 pub async fn db_list_databases(
     state: State<'_, AppState>,
     db_session_id: String,
 ) -> Result<Vec<String>, String> {
-    use mysql_async::prelude::Queryable;
-
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let pg = sess.pg()?;
+        let client = pg.client(&pg.default_db).await?;
+        let rows = client
+            .query(
+                "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn ORDER BY datname",
+                &[],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect());
+    }
+
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.query("SHOW DATABASES").await.map_err(|e| e.to_string())
 }
 
-/// Tables + views in `database`, via information_schema (doesn't disturb the
-/// connection's current database).
+/// List schemas in a Postgres database (MySQL has no schema layer — returns []).
+#[tauri::command]
+pub async fn db_list_schemas(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    database: String,
+) -> Result<Vec<String>, String> {
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    if !sess.is_pg() {
+        return Ok(vec![]);
+    }
+    let client = sess.pg()?.client(&database).await?;
+    let rows = client
+        .query(
+            "SELECT schema_name FROM information_schema.schemata \
+             WHERE schema_name <> 'information_schema' AND schema_name !~ '^pg_' \
+             ORDER BY schema_name",
+            &[],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
+}
+
+/// Tables + views. MySQL: information_schema by database. Postgres: by database
+/// + schema (schema is None/ignored for MySQL).
 #[tauri::command]
 pub async fn db_list_tables(
     state: State<'_, AppState>,
     db_session_id: String,
     database: String,
+    schema: Option<String>,
 ) -> Result<Vec<TableInfo>, String> {
-    use mysql_async::prelude::Queryable;
-
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        let rows = client
+            .query(
+                "SELECT table_name, table_type FROM information_schema.tables \
+                 WHERE table_schema = $1 ORDER BY table_name",
+                &[&sch],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(rows
+            .iter()
+            .map(|r| {
+                let ty: String = r.get(1);
+                TableInfo {
+                    name: r.get(0),
+                    kind: if ty.eq_ignore_ascii_case("VIEW") { "view".into() } else { "table".into() },
+                }
+            })
+            .collect());
+    }
+
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     let rows: Vec<(String, String)> = conn
         .exec(
             "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES \
@@ -284,13 +432,15 @@ pub async fn db_list_tables(
         .collect())
 }
 
-/// Close a live DB session: disconnect the pool (best effort) and drop the
-/// tunnel. Idempotent — closing an unknown id is a no-op.
+/// Close a live DB session: disconnect the MySQL pool (best effort) and drop the
+/// tunnel + any Postgres clients. Idempotent.
 #[tauri::command]
 pub async fn db_close(state: State<'_, AppState>, db_session_id: String) -> Result<(), String> {
     if let Some(sess) = state.remove_db(&db_session_id) {
-        // Disconnect while the tunnel is still alive (sess holds it), then drop.
-        let _ = sess.pool.clone().disconnect().await;
+        if let DbBackend::Mysql(pool) = &sess.backend {
+            let _ = pool.clone().disconnect().await;
+        }
+        // Postgres clients + tunnel drop with `sess`.
     }
     Ok(())
 }
@@ -465,6 +615,172 @@ fn quote_ident(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
+/// Run a query on Postgres via the simple-query protocol (values come back as
+/// text — same stringify model as MySQL's text protocol). Column types aren't
+/// available here, so `db_type` is left blank (enriched in a later stage).
+async fn run_query_pg(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<QueryResult, String> {
+    let msgs = client.simple_query(sql).await.map_err(|e| e.to_string())?;
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+    let mut rows_affected = 0u64;
+    let mut truncated = false;
+    for m in msgs {
+        match m {
+            tokio_postgres::SimpleQueryMessage::RowDescription(cols) => {
+                columns = cols
+                    .iter()
+                    .map(|c| ColumnInfo { name: c.name().to_string(), db_type: String::new() })
+                    .collect();
+            }
+            tokio_postgres::SimpleQueryMessage::Row(row) => {
+                if columns.is_empty() {
+                    columns = row
+                        .columns()
+                        .iter()
+                        .map(|c| ColumnInfo { name: c.name().to_string(), db_type: String::new() })
+                        .collect();
+                }
+                if rows.len() >= MAX_ROWS {
+                    truncated = true;
+                    continue;
+                }
+                let cells = (0..row.len()).map(|i| row.get(i).map(|s| s.to_string())).collect();
+                rows.push(cells);
+            }
+            tokio_postgres::SimpleQueryMessage::CommandComplete(n) => rows_affected = n,
+            _ => {}
+        }
+    }
+    Ok(QueryResult { columns, rows, rows_affected, truncated })
+}
+
+/// Best-effort total row count for a Postgres SELECT (wrapped in a subquery).
+async fn pg_count(client: &tokio_postgres::Client, sql: &str) -> Option<u64> {
+    let msgs = client
+        .simple_query(&format!("SELECT COUNT(*) FROM ({sql}) AS _moorix_count"))
+        .await
+        .ok()?;
+    for m in msgs {
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = m {
+            return row.get(0).and_then(|s| s.parse::<u64>().ok());
+        }
+    }
+    None
+}
+
+/// Double-quote a Postgres identifier.
+fn pg_quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Friendly Postgres type label from information_schema metadata (udt_name plus
+/// length/precision), e.g. "varchar(255)", "numeric(12,2)", "integer", "bool" →
+/// "boolean", "timestamptz". Unknown types pass through as their udt_name.
+fn pg_friendly_type(
+    udt: &str,
+    char_len: Option<i32>,
+    prec: Option<i32>,
+    scale: Option<i32>,
+) -> String {
+    match udt {
+        "int2" => "smallint".into(),
+        "int4" => "integer".into(),
+        "int8" => "bigint".into(),
+        "float4" => "real".into(),
+        "float8" => "double precision".into(),
+        "bool" => "boolean".into(),
+        "varchar" => match char_len {
+            Some(n) => format!("varchar({n})"),
+            None => "varchar".into(),
+        },
+        "bpchar" => match char_len {
+            Some(n) => format!("char({n})"),
+            None => "char".into(),
+        },
+        "numeric" => match (prec, scale) {
+            (Some(p), Some(s)) => format!("numeric({p},{s})"),
+            (Some(p), None) => format!("numeric({p})"),
+            _ => "numeric".into(),
+        },
+        other => other.to_string(),
+    }
+}
+
+/// Map of column name → friendly type for a Postgres table (used to enrich a
+/// browse result grid, since the simple-query protocol carries no type info).
+async fn pg_column_types(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let rows = client
+        .query(
+            "SELECT column_name::text, udt_name::text, \
+             character_maximum_length::int, numeric_precision::int, numeric_scale::int \
+             FROM information_schema.columns \
+             WHERE table_schema::text = $1 AND table_name::text = $2 \
+             ORDER BY ordinal_position",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let name: String = r.get(0);
+            let udt: String = r.get(1);
+            (name, pg_friendly_type(&udt, r.get(2), r.get(3), r.get(4)))
+        })
+        .collect())
+}
+
+/// Single-quote a Postgres string literal (doubling embedded quotes). Safe with
+/// standard_conforming_strings (default since PG 9.1): backslashes are literal,
+/// so a doubled `''` is the only way to embed a quote and there's no escape-out.
+fn pg_quote_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Render a cell value as a Postgres literal: NULL keyword or a quoted string.
+/// Unknown-type string literals are coerced to the target column type by the
+/// server (same model as MySQL's text protocol), so `'123'` fills an int column.
+fn pg_cell_literal(v: &Option<String>) -> String {
+    match v {
+        None => "NULL".to_string(),
+        Some(s) => pg_quote_literal(s),
+    }
+}
+
+/// Run a Postgres statement (simple protocol) and return its affected-row count.
+/// Used for DML/DDL where values are inlined as literals (see `pg_cell_literal`).
+async fn pg_exec_count(client: &tokio_postgres::Client, sql: &str) -> Result<u64, String> {
+    let msgs = client.simple_query(sql).await.map_err(|e| e.to_string())?;
+    let mut affected = 0u64;
+    for m in msgs {
+        if let tokio_postgres::SimpleQueryMessage::CommandComplete(n) = m {
+            affected = n;
+        }
+    }
+    Ok(affected)
+}
+
+/// Exact row count for a Postgres table (for pagination).
+async fn pg_count_table(client: &tokio_postgres::Client, qualified: &str) -> Option<u64> {
+    let msgs = client
+        .simple_query(&format!("SELECT COUNT(*) FROM {qualified}"))
+        .await
+        .ok()?;
+    for m in msgs {
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = m {
+            return row.get(0).and_then(|s| s.parse::<u64>().ok());
+        }
+    }
+    None
+}
+
 /// Result of the SQL editor: the (possibly paginated) result set plus, when the
 /// query was a paginable SELECT, the total row count so the UI can page like
 /// phpMyAdmin.
@@ -507,7 +823,24 @@ pub async fn db_run_sql(
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    // Postgres: run against the client bound to `database` (no USE in PG).
+    if sess.is_pg() {
+        let pg = sess.pg()?;
+        let dbname = database.filter(|d| !d.is_empty()).unwrap_or_else(|| pg.default_db.clone());
+        let client = pg.client(&dbname).await?;
+        let trimmed = sql.trim().trim_end_matches(';').trim().to_string();
+        if page_size > 0 && is_paginable_select(&trimmed) {
+            let offset = page.saturating_mul(page_size as u64);
+            let result = run_query_pg(&client, &format!("{trimmed} LIMIT {page_size} OFFSET {offset}")).await?;
+            let total = pg_count(&client, &trimmed).await;
+            return Ok(SqlResult { result, total, paginated: true });
+        }
+        let result = run_query_pg(&client, &sql).await?;
+        return Ok(SqlResult { result, total: None, paginated: false });
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
 
     if let Some(db) = database.filter(|d| !d.is_empty()) {
         conn.query_drop(format!("USE {}", quote_ident(&db)))
@@ -548,13 +881,38 @@ pub async fn db_browse(
     table: String,
     limit: u32,
     offset: u64,
+    schema: Option<String>,
 ) -> Result<BrowseResult, String> {
     use mysql_async::prelude::Queryable;
 
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    // Postgres: connect to `database`, window `schema.table` with quoting, and
+    // enrich column types from information_schema (the simple protocol has none).
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        let qualified = format!("{}.{}", pg_quote_ident(&sch), pg_quote_ident(&table));
+        let mut result = run_query_pg(
+            &client,
+            &format!("SELECT * FROM {qualified} LIMIT {limit} OFFSET {offset}"),
+        )
+        .await?;
+        if let Ok(types) = pg_column_types(&client, &sch, &table).await {
+            let map: std::collections::HashMap<String, String> = types.into_iter().collect();
+            for c in &mut result.columns {
+                if let Some(t) = map.get(&c.name) {
+                    c.db_type = t.clone();
+                }
+            }
+        }
+        let total = pg_count_table(&client, &qualified).await.unwrap_or(0);
+        return Ok(BrowseResult { result, total });
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
 
     let qualified = format!("{}.{}", quote_ident(&database), quote_ident(&table));
     let result = run_query(
@@ -625,13 +983,136 @@ pub async fn db_table_structure(
     db_session_id: String,
     database: String,
     table: String,
+    schema: Option<String>,
 ) -> Result<TableStructure, String> {
     use mysql_async::prelude::Queryable;
 
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+
+        // Primary-key columns (used to flag columns below).
+        let pk_rows = client
+            .query(
+                "SELECT att.attname::text FROM pg_constraint con \
+                 JOIN pg_class t ON t.oid = con.conrelid \
+                 JOIN pg_namespace n ON n.oid = t.relnamespace \
+                 JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS ck(attnum, ord) ON true \
+                 JOIN pg_attribute att ON att.attrelid = t.oid AND att.attnum = ck.attnum \
+                 WHERE con.contype = 'p' AND n.nspname::text = $1 AND t.relname::text = $2 \
+                 ORDER BY ck.ord",
+                &[&sch, &table],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let primary_key: Vec<String> = pk_rows.iter().map(|r| r.get::<_, String>(0)).collect();
+
+        // Columns
+        let col_rows = client
+            .query(
+                "SELECT column_name::text, udt_name::text, is_nullable::text, column_default::text, \
+                 character_maximum_length::int, numeric_precision::int, numeric_scale::int, is_identity::text \
+                 FROM information_schema.columns \
+                 WHERE table_schema::text = $1 AND table_name::text = $2 ORDER BY ordinal_position",
+                &[&sch, &table],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let columns: Vec<ColumnDef> = col_rows
+            .iter()
+            .map(|r| {
+                let name: String = r.get(0);
+                let udt: String = r.get(1);
+                let is_nullable: String = r.get(2);
+                let default: Option<String> = r.get(3);
+                let is_identity: String = r.get(7);
+                let key = if primary_key.contains(&name) {
+                    "PRI".to_string()
+                } else {
+                    String::new()
+                };
+                let extra = if is_identity.eq_ignore_ascii_case("YES") {
+                    "identity".to_string()
+                } else if default.as_deref().map(|d| d.starts_with("nextval(")).unwrap_or(false) {
+                    "serial".to_string()
+                } else {
+                    String::new()
+                };
+                ColumnDef {
+                    name,
+                    data_type: pg_friendly_type(&udt, r.get(4), r.get(5), r.get(6)),
+                    nullable: is_nullable.eq_ignore_ascii_case("YES"),
+                    key,
+                    default,
+                    extra,
+                    comment: String::new(),
+                }
+            })
+            .collect();
+
+        // Indexes (columns via `= ANY(indkey)`; ordered by their position in it).
+        let idx_rows = client
+            .query(
+                "SELECT i.relname::text, ix.indisunique, a.attname::text, \
+                 array_position(string_to_array(ix.indkey::text, ' ')::int[], a.attnum::int) AS ord \
+                 FROM pg_index ix \
+                 JOIN pg_class i ON i.oid = ix.indexrelid \
+                 JOIN pg_class t ON t.oid = ix.indrelid \
+                 JOIN pg_namespace n ON n.oid = t.relnamespace \
+                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) \
+                 WHERE n.nspname::text = $1 AND t.relname::text = $2 \
+                 ORDER BY i.relname, ord",
+                &[&sch, &table],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut indexes: Vec<IndexDef> = Vec::new();
+        for r in &idx_rows {
+            let iname: String = r.get(0);
+            let unique: bool = r.get(1);
+            let col: String = r.get(2);
+            match indexes.last_mut() {
+                Some(last) if last.name == iname => last.columns.push(col),
+                _ => indexes.push(IndexDef { name: iname, columns: vec![col], unique }),
+            }
+        }
+
+        // Foreign keys (each local column paired with its referenced column by ordinal).
+        let fk_rows = client
+            .query(
+                "SELECT con.conname::text, att.attname::text, ft.relname::text, fatt.attname::text \
+                 FROM pg_constraint con \
+                 JOIN pg_class t ON t.oid = con.conrelid \
+                 JOIN pg_namespace n ON n.oid = t.relnamespace \
+                 JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS ck(attnum, ord) ON true \
+                 JOIN pg_attribute att ON att.attrelid = t.oid AND att.attnum = ck.attnum \
+                 JOIN pg_class ft ON ft.oid = con.confrelid \
+                 JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS fk(attnum, ord) ON fk.ord = ck.ord \
+                 JOIN pg_attribute fatt ON fatt.attrelid = ft.oid AND fatt.attnum = fk.attnum \
+                 WHERE con.contype = 'f' AND n.nspname::text = $1 AND t.relname::text = $2 \
+                 ORDER BY con.conname, ck.ord",
+                &[&sch, &table],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let foreign_keys: Vec<ForeignKeyDef> = fk_rows
+            .iter()
+            .map(|r| ForeignKeyDef {
+                name: r.get(0),
+                column: r.get(1),
+                ref_table: r.get(2),
+                ref_column: r.get(3),
+            })
+            .collect();
+
+        return Ok(TableStructure { columns, indexes, foreign_keys, primary_key });
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
 
     // Columns
     let col_rows: Vec<(String, String, String, String, Option<String>, String, String)> = conn
@@ -739,6 +1220,7 @@ pub async fn db_update_row(
     table: String,
     pk: Vec<CellValue>,
     changes: Vec<CellValue>,
+    schema: Option<String>,
 ) -> Result<u64, String> {
     use mysql_async::prelude::Queryable;
 
@@ -747,6 +1229,32 @@ pub async fn db_update_row(
     }
     if changes.is_empty() {
         return Ok(0);
+    }
+
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+
+    // Postgres: schema-qualified, values inlined as coerced literals (no LIMIT).
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        let set_clause = changes
+            .iter()
+            .map(|c| format!("{} = {}", pg_quote_ident(&c.column), pg_cell_literal(&c.value)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let where_clause = pk
+            .iter()
+            .map(|c| format!("{} = {}", pg_quote_ident(&c.column), pg_cell_literal(&c.value)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!(
+            "UPDATE {}.{} SET {set_clause} WHERE {where_clause}",
+            pg_quote_ident(&sch),
+            pg_quote_ident(&table)
+        );
+        return pg_exec_count(&client, &sql).await;
     }
 
     let set_clause = changes
@@ -769,10 +1277,7 @@ pub async fn db_update_row(
     params.extend(changes.iter().map(|c| to_value(&c.value)));
     params.extend(pk.iter().map(|c| to_value(&c.value)));
 
-    let sess = state
-        .db_session(&db_session_id)
-        .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.exec_drop(&sql, params).await.map_err(|e| e.to_string())?;
     Ok(conn.affected_rows())
 }
@@ -785,12 +1290,34 @@ pub async fn db_delete_row(
     database: String,
     table: String,
     pk: Vec<CellValue>,
+    schema: Option<String>,
 ) -> Result<u64, String> {
     use mysql_async::prelude::Queryable;
 
     if pk.is_empty() {
         return Err("cannot delete a row without a primary key".to_string());
     }
+
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        let where_clause = pk
+            .iter()
+            .map(|c| format!("{} = {}", pg_quote_ident(&c.column), pg_cell_literal(&c.value)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!(
+            "DELETE FROM {}.{} WHERE {where_clause}",
+            pg_quote_ident(&sch),
+            pg_quote_ident(&table)
+        );
+        return pg_exec_count(&client, &sql).await;
+    }
+
     let where_clause = pk
         .iter()
         .map(|c| format!("{} = ?", quote_ident(&c.column)))
@@ -803,10 +1330,7 @@ pub async fn db_delete_row(
     );
     let params: Vec<mysql_async::Value> = pk.iter().map(|c| to_value(&c.value)).collect();
 
-    let sess = state
-        .db_session(&db_session_id)
-        .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.exec_drop(&sql, params).await.map_err(|e| e.to_string())?;
     Ok(conn.affected_rows())
 }
@@ -820,12 +1344,39 @@ pub async fn db_insert_row(
     database: String,
     table: String,
     values: Vec<CellValue>,
+    schema: Option<String>,
 ) -> Result<u64, String> {
     use mysql_async::prelude::Queryable;
 
     if values.is_empty() {
         return Err("no values to insert".to_string());
     }
+
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        let cols = values
+            .iter()
+            .map(|c| pg_quote_ident(&c.column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let vals = values
+            .iter()
+            .map(|c| pg_cell_literal(&c.value))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO {}.{} ({cols}) VALUES ({vals})",
+            pg_quote_ident(&sch),
+            pg_quote_ident(&table)
+        );
+        return pg_exec_count(&client, &sql).await;
+    }
+
     let cols = values
         .iter()
         .map(|c| quote_ident(&c.column))
@@ -839,10 +1390,7 @@ pub async fn db_insert_row(
     );
     let params: Vec<mysql_async::Value> = values.iter().map(|c| to_value(&c.value)).collect();
 
-    let sess = state
-        .db_session(&db_session_id)
-        .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.exec_drop(&sql, params).await.map_err(|e| e.to_string())?;
     Ok(conn.affected_rows())
 }
@@ -870,7 +1418,36 @@ pub async fn db_schema(
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let client = sess.pg()?.client(&database).await?;
+        let rows = client
+            .query(
+                "SELECT table_name::text, column_name::text, udt_name::text, \
+                 character_maximum_length::int, numeric_precision::int, numeric_scale::int \
+                 FROM information_schema.columns \
+                 WHERE table_schema::text NOT IN ('information_schema', 'pg_catalog') \
+                 AND table_schema::text !~ '^pg_' ORDER BY table_name, ordinal_position",
+                &[],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(rows
+            .iter()
+            .map(|r| {
+                let table: String = r.get(0);
+                let name: String = r.get(1);
+                let udt: String = r.get(2);
+                SchemaColumn {
+                    table,
+                    name,
+                    data_type: pg_friendly_type(&udt, r.get(3), r.get(4), r.get(5)),
+                }
+            })
+            .collect());
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     let rows: Vec<(String, String, String)> = conn
         .exec(
             "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS \
@@ -893,6 +1470,12 @@ pub async fn db_schema(
 /// db/table names go through the login shell that runs the exec).
 fn shq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\''"))
+}
+
+/// Escape a value for a Postgres `.pgpass` field (`\` and `:` are the only
+/// specials; everything else is literal). Used for the user/password fields.
+fn pg_pgpass_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace(':', "\\:")
 }
 
 /// Run a command on the server over a fresh exec channel. Optional `stdin` is
@@ -1005,8 +1588,9 @@ async fn exec_to_file(
 }
 
 /// Export a database (or selected tables) to a local `.sql` file using
-/// server-side `mysqldump`. Saves into the OS Downloads folder and returns the
-/// full local path. Credentials go through a mode-600 defaults file (never argv).
+/// server-side `mysqldump` (MySQL) or `pg_dump` (Postgres). Saves into the OS
+/// Downloads folder and returns the full local path. Credentials go through a
+/// mode-600 file (defaults-extra-file / .pgpass), never argv.
 #[tauri::command]
 pub async fn db_export_sql(
     app: AppHandle,
@@ -1016,6 +1600,7 @@ pub async fn db_export_sql(
     tables: Vec<String>,
     structure_only: bool,
     data_only: bool,
+    schema: Option<String>,
 ) -> Result<String, String> {
     let sess = state
         .db_session(&db_session_id)
@@ -1023,6 +1608,70 @@ pub async fn db_export_sql(
     let handle = state
         .ssh_handle(&sess.parent_ssh)
         .ok_or_else(|| "SSH session for this database is closed".to_string())?;
+
+    // Destination (engine-independent): Downloads/<db>[_<table>]_<epoch>.sql
+    let dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| format!("no downloads dir: {e}"))?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let base = if tables.len() == 1 {
+        format!("{database}_{}", tables[0])
+    } else {
+        database.clone()
+    };
+    let safe: String = base
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let local_path = dir.join(format!("{safe}_{ts}.sql"));
+
+    // Postgres: pg_dump, credentials via a mode-600 .pgpass (PGPASSFILE).
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let pgpass = format!("/tmp/.moorix-dump-{}.pgpass", state.next_id());
+        let body = format!(
+            "*:*:*:{}:{}\n",
+            pg_pgpass_escape(&sess.db_user),
+            pg_pgpass_escape(&sess.db_password)
+        );
+        write_secure_remote(&handle, &pgpass, body.as_bytes()).await?;
+
+        let mut cmd = format!(
+            "PGPASSFILE={} pg_dump -h {} -p {} -U {} -d {} --no-owner --no-privileges",
+            shq(&pgpass),
+            shq(&sess.db_host),
+            sess.db_port,
+            shq(&sess.db_user),
+            shq(&database)
+        );
+        if structure_only {
+            cmd.push_str(" --schema-only");
+        }
+        if data_only {
+            cmd.push_str(" --data-only");
+        }
+        for t in &tables {
+            cmd.push_str(" -t ");
+            cmd.push_str(&shq(&format!("{sch}.{t}")));
+        }
+
+        let result = exec_to_file(&handle, &cmd, &local_path).await;
+        let _ = run_exec(&handle, &format!("rm -f {}", shq(&pgpass)), None, |_| {}).await;
+
+        let (_bytes, stderr, code) = result?;
+        if code != 0 {
+            let _ = tokio::fs::remove_file(&local_path).await;
+            return Err(format!(
+                "pg_dump exited {code}: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            ));
+        }
+        return Ok(local_path.to_string_lossy().to_string());
+    }
 
     // Unique, shell-safe temp path for the credentials file.
     let cnf = format!("/tmp/.moorix-dump-{}.cnf", state.next_id());
@@ -1050,26 +1699,6 @@ pub async fn db_export_sql(
         cmd.push_str(&shq(t));
     }
 
-    // Destination: Downloads/<db>[_<table>]_<epoch>.sql
-    let dir = app
-        .path()
-        .download_dir()
-        .map_err(|e| format!("no downloads dir: {e}"))?;
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let base = if tables.len() == 1 {
-        format!("{database}_{}", tables[0])
-    } else {
-        database.clone()
-    };
-    let safe: String = base
-        .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-        .collect();
-    let local_path = dir.join(format!("{safe}_{ts}.sql"));
-
     let result = exec_to_file(&handle, &cmd, &local_path).await;
 
     // Always remove the credentials file, whatever happened.
@@ -1087,9 +1716,9 @@ pub async fn db_export_sql(
     Ok(local_path.to_string_lossy().to_string())
 }
 
-/// Import a `.sql` script into `database` via server-side `mysql`, streaming the
-/// script to its stdin. Credentials go through a mode-600 defaults file (never
-/// argv). Returns Ok(()) on success; the mysql error on failure.
+/// Import a `.sql` script into `database` via server-side `mysql` (MySQL) or
+/// `psql` (Postgres), streaming the script to its stdin. Credentials go through a
+/// mode-600 file (never argv). Returns Ok(()) on success; the tool's error otherwise.
 #[tauri::command]
 pub async fn db_import_sql(
     state: State<'_, AppState>,
@@ -1103,6 +1732,32 @@ pub async fn db_import_sql(
     let handle = state
         .ssh_handle(&sess.parent_ssh)
         .ok_or_else(|| "SSH session for this database is closed".to_string())?;
+
+    // Postgres: psql reads the script from stdin; ON_ERROR_STOP makes it fail hard.
+    if sess.is_pg() {
+        let pgpass = format!("/tmp/.moorix-import-{}.pgpass", state.next_id());
+        let body = format!(
+            "*:*:*:{}:{}\n",
+            pg_pgpass_escape(&sess.db_user),
+            pg_pgpass_escape(&sess.db_password)
+        );
+        write_secure_remote(&handle, &pgpass, body.as_bytes()).await?;
+        let cmd = format!(
+            "PGPASSFILE={} psql -h {} -p {} -U {} -d {} -v ON_ERROR_STOP=1 -q",
+            shq(&pgpass),
+            shq(&sess.db_host),
+            sess.db_port,
+            shq(&sess.db_user),
+            shq(&database)
+        );
+        let result = run_exec(&handle, &cmd, Some(sql.into_bytes()), |_| {}).await;
+        let _ = run_exec(&handle, &format!("rm -f {}", shq(&pgpass)), None, |_| {}).await;
+        let (stderr, code) = result?;
+        if code != 0 {
+            return Err(String::from_utf8_lossy(&stderr).trim().to_string());
+        }
+        return Ok(());
+    }
 
     let cnf = format!("/tmp/.moorix-import-{}.cnf", state.next_id());
     let cnf_body = format!(
@@ -1139,12 +1794,27 @@ pub async fn db_drop_table(
     db_session_id: String,
     database: String,
     table: String,
+    schema: Option<String>,
 ) -> Result<(), String> {
     use mysql_async::prelude::Queryable;
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        return client
+            .batch_execute(&format!(
+                "DROP TABLE {}.{}",
+                pg_quote_ident(&sch),
+                pg_quote_ident(&table)
+            ))
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.query_drop(format!(
         "DROP TABLE {}.{}",
         quote_ident(&database),
@@ -1162,12 +1832,29 @@ pub async fn db_rename_table(
     database: String,
     old_name: String,
     new_name: String,
+    schema: Option<String>,
 ) -> Result<(), String> {
     use mysql_async::prelude::Queryable;
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let sch = schema.unwrap_or_else(|| "public".to_string());
+        let client = sess.pg()?.client(&database).await?;
+        // Postgres: the new name is bare (rename is within the same schema).
+        return client
+            .batch_execute(&format!(
+                "ALTER TABLE {}.{} RENAME TO {}",
+                pg_quote_ident(&sch),
+                pg_quote_ident(&old_name),
+                pg_quote_ident(&new_name)
+            ))
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.query_drop(format!(
         "RENAME TABLE {}.{} TO {}.{}",
         quote_ident(&database),
@@ -1190,7 +1877,20 @@ pub async fn db_drop_database(
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let pg = sess.pg()?;
+        // Can't drop a database we're connected to — evict its cached client, then
+        // run the DROP from the default database's connection.
+        pg.close_db(&database).await;
+        let client = pg.client(&pg.default_db).await?;
+        return client
+            .batch_execute(&format!("DROP DATABASE {}", pg_quote_ident(&database)))
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.query_drop(format!("DROP DATABASE {}", quote_ident(&database)))
         .await
         .map_err(|e| e.to_string())
@@ -1210,7 +1910,24 @@ pub async fn db_rename_database(
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
-    let mut conn = sess.pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    if sess.is_pg() {
+        let pg = sess.pg()?;
+        // Postgres has a native rename, but refuses it while a session is connected
+        // to the database — evict its cached client, then rename from the default db.
+        pg.close_db(&old_name).await;
+        let client = pg.client(&pg.default_db).await?;
+        return client
+            .batch_execute(&format!(
+                "ALTER DATABASE {} RENAME TO {}",
+                pg_quote_ident(&old_name),
+                pg_quote_ident(&new_name)
+            ))
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
 
     conn.query_drop(format!("CREATE DATABASE {}", quote_ident(&new_name)))
         .await
@@ -1239,4 +1956,247 @@ pub async fn db_rename_database(
     conn.query_drop(format!("DROP DATABASE {}", quote_ident(&old_name)))
         .await
         .map_err(|e| format!("drop old database: {e}"))
+}
+
+/* -------------------------------------------------------------------------- */
+/* DDL: create database & table (MySQL/MariaDB + PostgreSQL).                   */
+/* -------------------------------------------------------------------------- */
+
+/// A column definition for `db_create_table`. `data_type` is the raw SQL type
+/// the user chose (e.g. "varchar(255)", "int", "serial", "numeric(12,2)").
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewColumn {
+    pub name: String,
+    pub data_type: String,
+    pub nullable: bool,
+    /// Raw default expression (e.g. "0", "'x'", "now()") or None.
+    pub default: Option<String>,
+    pub primary_key: bool,
+    /// MySQL AUTO_INCREMENT (ignored for Postgres — use a serial type there).
+    pub auto_increment: bool,
+}
+
+/// Create a database. Engine-aware quoting; Postgres runs it outside a
+/// transaction via the simple protocol.
+#[tauri::command]
+pub async fn db_create_database(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    name: String,
+) -> Result<(), String> {
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+
+    if sess.is_pg() {
+        let pg = sess.pg()?;
+        let client = pg.client(&pg.default_db).await?;
+        return client
+            .batch_execute(&format!("CREATE DATABASE {}", pg_quote_ident(&name)))
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
+    conn.query_drop(format!("CREATE DATABASE {}", quote_ident(&name)))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create a table from a column spec. `schema` is used for Postgres (defaults to
+/// "public"); MySQL uses `database`.
+#[tauri::command]
+pub async fn db_create_table(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    database: String,
+    schema: Option<String>,
+    table: String,
+    columns: Vec<NewColumn>,
+) -> Result<(), String> {
+    if columns.is_empty() {
+        return Err("a table needs at least one column".to_string());
+    }
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    let pg = sess.is_pg();
+    let q: fn(&str) -> String = if pg { pg_quote_ident } else { quote_ident };
+
+    let mut defs: Vec<String> = Vec::new();
+    let mut pks: Vec<String> = Vec::new();
+    for c in &columns {
+        defs.push(build_column_def(c, pg)?);
+        if c.primary_key {
+            pks.push(q(&c.name));
+        }
+    }
+    if !pks.is_empty() {
+        defs.push(format!("PRIMARY KEY ({})", pks.join(", ")));
+    }
+
+    let qualified = if pg {
+        format!("{}.{}", q(&schema.clone().unwrap_or_else(|| "public".to_string())), q(&table))
+    } else {
+        format!("{}.{}", q(&database), q(&table))
+    };
+    let sql = format!("CREATE TABLE {qualified} (\n  {}\n)", defs.join(",\n  "));
+
+    if pg {
+        let client = sess.pg()?.client(&database).await?;
+        return client.batch_execute(&sql).await.map_err(|e| e.to_string());
+    }
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
+    conn.query_drop(sql).await.map_err(|e| e.to_string())
+}
+
+/// Build a single column definition (`"name" type [NOT NULL] [DEFAULT x]
+/// [AUTO_INCREMENT]`) — shared by create-table and add/modify-column. `pg`
+/// selects the quoting and drops AUTO_INCREMENT (Postgres uses serial types).
+fn build_column_def(c: &NewColumn, pg: bool) -> Result<String, String> {
+    if c.name.trim().is_empty() || c.data_type.trim().is_empty() {
+        return Err("every column needs a name and a type".to_string());
+    }
+    let q: fn(&str) -> String = if pg { pg_quote_ident } else { quote_ident };
+    let mut def = format!("{} {}", q(&c.name), c.data_type.trim());
+    if !c.nullable {
+        def.push_str(" NOT NULL");
+    }
+    if let Some(d) = c.default.as_ref().filter(|d| !d.trim().is_empty()) {
+        def.push_str(&format!(" DEFAULT {}", d.trim()));
+    }
+    if !pg && c.auto_increment {
+        def.push_str(" AUTO_INCREMENT");
+    }
+    Ok(def)
+}
+
+/* -------------------------------------------------------------------------- */
+/* DDL: edit columns (add / modify / drop) — MySQL/MariaDB + PostgreSQL.        */
+/* -------------------------------------------------------------------------- */
+
+/// Qualified table name for a DDL statement (schema.table for PG, db.table for MySQL).
+fn ddl_qualified(pg: bool, database: &str, schema: &Option<String>, table: &str) -> String {
+    if pg {
+        let sch = schema.clone().unwrap_or_else(|| "public".to_string());
+        format!("{}.{}", pg_quote_ident(&sch), pg_quote_ident(table))
+    } else {
+        format!("{}.{}", quote_ident(database), quote_ident(table))
+    }
+}
+
+/// ADD a column to an existing table.
+#[tauri::command]
+pub async fn db_add_column(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    database: String,
+    table: String,
+    column: NewColumn,
+    schema: Option<String>,
+) -> Result<(), String> {
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    let pg = sess.is_pg();
+    let def = build_column_def(&column, pg)?;
+    let qualified = ddl_qualified(pg, &database, &schema, &table);
+    let sql = format!("ALTER TABLE {qualified} ADD COLUMN {def}");
+
+    if pg {
+        let client = sess.pg()?.client(&database).await?;
+        return client.batch_execute(&sql).await.map_err(|e| e.to_string());
+    }
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
+    conn.query_drop(sql).await.map_err(|e| e.to_string())
+}
+
+/// MODIFY a column (rename + redefine). MySQL uses one `CHANGE COLUMN`; Postgres
+/// needs separate RENAME / TYPE / NOT NULL / DEFAULT statements (run as one
+/// atomic batch). `old_name` is the current column name; `column` the new spec.
+#[tauri::command]
+pub async fn db_modify_column(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    database: String,
+    table: String,
+    old_name: String,
+    column: NewColumn,
+    schema: Option<String>,
+) -> Result<(), String> {
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    let pg = sess.is_pg();
+    let qualified = ddl_qualified(pg, &database, &schema, &table);
+
+    if pg {
+        if column.name.trim().is_empty() || column.data_type.trim().is_empty() {
+            return Err("column needs a name and a type".to_string());
+        }
+        let client = sess.pg()?.client(&database).await?;
+        let mut stmts: Vec<String> = Vec::new();
+        if old_name != column.name {
+            stmts.push(format!(
+                "ALTER TABLE {qualified} RENAME COLUMN {} TO {}",
+                pg_quote_ident(&old_name),
+                pg_quote_ident(&column.name)
+            ));
+        }
+        let col = pg_quote_ident(&column.name);
+        let ty = column.data_type.trim();
+        // USING clause casts existing values so most type changes succeed.
+        stmts.push(format!(
+            "ALTER TABLE {qualified} ALTER COLUMN {col} TYPE {ty} USING {col}::{ty}"
+        ));
+        stmts.push(format!(
+            "ALTER TABLE {qualified} ALTER COLUMN {col} {}",
+            if column.nullable { "DROP NOT NULL" } else { "SET NOT NULL" }
+        ));
+        match column.default.as_ref().filter(|d| !d.trim().is_empty()) {
+            Some(d) => stmts.push(format!(
+                "ALTER TABLE {qualified} ALTER COLUMN {col} SET DEFAULT {}",
+                d.trim()
+            )),
+            None => stmts.push(format!("ALTER TABLE {qualified} ALTER COLUMN {col} DROP DEFAULT")),
+        }
+        return client.batch_execute(&stmts.join(";\n")).await.map_err(|e| e.to_string());
+    }
+
+    let def = build_column_def(&column, false)?;
+    let sql = format!("ALTER TABLE {qualified} CHANGE COLUMN {} {def}", quote_ident(&old_name));
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
+    conn.query_drop(sql).await.map_err(|e| e.to_string())
+}
+
+/// DROP a column from a table.
+#[tauri::command]
+pub async fn db_drop_column(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    database: String,
+    table: String,
+    column: String,
+    schema: Option<String>,
+) -> Result<(), String> {
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    let pg = sess.is_pg();
+    let qualified = ddl_qualified(pg, &database, &schema, &table);
+    let col = if pg { pg_quote_ident(&column) } else { quote_ident(&column) };
+    let sql = format!("ALTER TABLE {qualified} DROP COLUMN {col}");
+
+    if pg {
+        let client = sess.pg()?.client(&database).await?;
+        return client.batch_execute(&sql).await.map_err(|e| e.to_string());
+    }
+    use mysql_async::prelude::Queryable;
+    let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
+    conn.query_drop(sql).await.map_err(|e| e.to_string())
 }

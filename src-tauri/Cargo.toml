@@ -27,9 +27,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 russh = { version = "0.62", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2"
-# Database driver (Fase 20). `minimal` = no TLS, no OpenSSL — we always reach the
-# DB through the SSH tunnel at 127.0.0.1, so transport is already encrypted.
+# Database drivers (Fase 20). We always reach the DB through the SSH tunnel at
+# 127.0.0.1, so no TLS is needed on either driver.
 mysql_async = { version = "0.37", default-features = false, features = ["minimal"] }
+tokio-postgres = "0.7"
 tokio = { version = "1", features = ["macros", "sync", "io-util", "time", "net"] }
 tauri-plugin-store = "2"
 sha2 = "0.10"

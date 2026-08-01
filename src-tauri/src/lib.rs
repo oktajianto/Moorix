@@ -51,6 +51,8 @@ pub fn run() {
             commands::session_resize,
             commands::session_close,
             commands::host_key_decision,
+            ssh::trust_host_key,
+            ssh::forget_host_key,
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,
@@ -96,6 +98,7 @@ pub fn run() {
             db::db_test_connect,
             db::db_open,
             db::db_list_databases,
+            db::db_list_schemas,
             db::db_list_tables,
             db::db_close,
             db::db_run_sql,
@@ -111,6 +114,11 @@ pub fn run() {
             db::db_rename_table,
             db::db_drop_database,
             db::db_rename_database,
+            db::db_create_database,
+            db::db_create_table,
+            db::db_add_column,
+            db::db_modify_column,
+            db::db_drop_column,
             open_devtools,
         ])
         .run(tauri::generate_context!())

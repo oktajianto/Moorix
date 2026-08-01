@@ -94,9 +94,14 @@ export function defaultPortFor(engine: DbEngine): number {
   return engine === "postgres" ? 5432 : 3306;
 }
 
-/** PostgreSQL support lands in Fase 20D; until then only MySQL/MariaDB connect. */
-export function engineSupported(engine: DbEngine): boolean {
-  return engine === "mysql" || engine === "mariadb";
+/** All engines are supported (MySQL/MariaDB + PostgreSQL). */
+export function engineSupported(_engine: DbEngine): boolean {
+  return true;
+}
+
+/** True for the PostgreSQL engine (schema layer, "..." quoting). */
+export function isPostgres(engine: DbEngine): boolean {
+  return engine === "postgres";
 }
 
 export function createDbProfile(): DBProfile {
@@ -142,6 +147,7 @@ export async function dbOpen(sessionId: string, db: DBProfile): Promise<string> 
   const password = db.password || (await secretGet(db.id).catch(() => null)) || "";
   return invoke<string>("db_open", {
     sessionId,
+    engine: db.engine,
     host: db.host || "127.0.0.1",
     port: db.port || defaultPortFor(db.engine),
     user: db.dbUser,
@@ -155,9 +161,18 @@ export function dbListDatabases(dbSessionId: string): Promise<string[]> {
   return invoke<string[]>("db_list_databases", { dbSessionId });
 }
 
-/** Tables + views in a database on a live DB session. */
-export function dbListTables(dbSessionId: string, database: string): Promise<TableInfo[]> {
-  return invoke<TableInfo[]>("db_list_tables", { dbSessionId, database });
+/** Schemas in a Postgres database (empty for MySQL). */
+export function dbListSchemas(dbSessionId: string, database: string): Promise<string[]> {
+  return invoke<string[]>("db_list_schemas", { dbSessionId, database });
+}
+
+/** Tables + views in a database (Postgres also needs `schema`). */
+export function dbListTables(
+  dbSessionId: string,
+  database: string,
+  schema?: string,
+): Promise<TableInfo[]> {
+  return invoke<TableInfo[]>("db_list_tables", { dbSessionId, database, schema: schema ?? null });
 }
 
 /** All tables + columns of a database (for SQL editor autocomplete). */
@@ -165,27 +180,36 @@ export function dbSchema(dbSessionId: string, database: string): Promise<SchemaC
   return invoke<SchemaColumn[]>("db_schema", { dbSessionId, database });
 }
 
-/** Full structure of one table (columns, indexes, FKs, primary key). */
+/** Full structure of one table (columns, indexes, FKs, primary key). Postgres
+ *  also needs `schema` (defaults to "public"); ignored for MySQL. */
 export function dbTableStructure(
   dbSessionId: string,
   database: string,
   table: string,
+  schema?: string,
 ): Promise<TableStructure> {
-  return invoke<TableStructure>("db_table_structure", { dbSessionId, database, table });
+  return invoke<TableStructure>("db_table_structure", {
+    dbSessionId,
+    database,
+    table,
+    schema: schema ?? null,
+  });
 }
 
 /** A column/value pair for a row mutation (value null = SQL NULL). */
 export type CellValue = { column: string; value: string | null };
 
-/** UPDATE one row (identified by `pk`) setting `changes`. Returns affected rows. */
+/** UPDATE one row (identified by `pk`) setting `changes`. Returns affected rows.
+ *  Postgres also needs `schema` (defaults to "public"); ignored for MySQL. */
 export function dbUpdateRow(
   dbSessionId: string,
   database: string,
   table: string,
   pk: CellValue[],
   changes: CellValue[],
+  schema?: string,
 ): Promise<number> {
-  return invoke<number>("db_update_row", { dbSessionId, database, table, pk, changes });
+  return invoke<number>("db_update_row", { dbSessionId, database, table, pk, changes, schema: schema ?? null });
 }
 
 /** DELETE one row identified by `pk`. Returns affected rows. */
@@ -194,8 +218,9 @@ export function dbDeleteRow(
   database: string,
   table: string,
   pk: CellValue[],
+  schema?: string,
 ): Promise<number> {
-  return invoke<number>("db_delete_row", { dbSessionId, database, table, pk });
+  return invoke<number>("db_delete_row", { dbSessionId, database, table, pk, schema: schema ?? null });
 }
 
 /** INSERT a row with the given column values (others use DB defaults). */
@@ -204,13 +229,15 @@ export function dbInsertRow(
   database: string,
   table: string,
   values: CellValue[],
+  schema?: string,
 ): Promise<number> {
-  return invoke<number>("db_insert_row", { dbSessionId, database, table, values });
+  return invoke<number>("db_insert_row", { dbSessionId, database, table, values, schema: schema ?? null });
 }
 
 /**
  * Export a database (or specific tables) to a local `.sql` via server-side
- * mysqldump. Saves into the OS Downloads folder; resolves to the saved path.
+ * mysqldump (MySQL) or pg_dump (Postgres). Saves into the OS Downloads folder;
+ * resolves to the saved path. `schema` qualifies table exports for Postgres.
  */
 export function dbExportSql(
   dbSessionId: string,
@@ -218,6 +245,7 @@ export function dbExportSql(
   tables: string[],
   structureOnly: boolean,
   dataOnly: boolean,
+  schema?: string,
 ): Promise<string> {
   return invoke<string>("db_export_sql", {
     dbSessionId,
@@ -225,6 +253,7 @@ export function dbExportSql(
     tables,
     structureOnly,
     dataOnly,
+    schema: schema ?? null,
   });
 }
 
@@ -240,19 +269,25 @@ export function dbImportSql(
   return invoke<void>("db_import_sql", { dbSessionId, database, sql });
 }
 
-/** DROP a table. */
-export function dbDropTable(dbSessionId: string, database: string, table: string): Promise<void> {
-  return invoke<void>("db_drop_table", { dbSessionId, database, table });
+/** DROP a table. Postgres also needs `schema` (defaults to "public"). */
+export function dbDropTable(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  schema?: string,
+): Promise<void> {
+  return invoke<void>("db_drop_table", { dbSessionId, database, table, schema: schema ?? null });
 }
 
-/** RENAME a table within its database. */
+/** RENAME a table within its database. Postgres also needs `schema`. */
 export function dbRenameTable(
   dbSessionId: string,
   database: string,
   oldName: string,
   newName: string,
+  schema?: string,
 ): Promise<void> {
-  return invoke<void>("db_rename_table", { dbSessionId, database, oldName, newName });
+  return invoke<void>("db_rename_table", { dbSessionId, database, oldName, newName, schema: schema ?? null });
 }
 
 /** DROP an entire database. */
@@ -267,6 +302,73 @@ export function dbRenameDatabase(
   newName: string,
 ): Promise<void> {
   return invoke<void>("db_rename_database", { dbSessionId, oldName, newName });
+}
+
+/** Create a database. */
+export function dbCreateDatabase(dbSessionId: string, name: string): Promise<void> {
+  return invoke<void>("db_create_database", { dbSessionId, name });
+}
+
+/** A column spec for creating a table. */
+export type NewColumn = {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  default: string | null;
+  primaryKey: boolean;
+  autoIncrement: boolean;
+};
+
+/** ADD a column to an existing table. Postgres also needs `schema`. */
+export function dbAddColumn(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  column: NewColumn,
+  schema?: string,
+): Promise<void> {
+  return invoke<void>("db_add_column", { dbSessionId, database, table, column, schema: schema ?? null });
+}
+
+/** MODIFY a column (rename + redefine). `oldName` is the current name. */
+export function dbModifyColumn(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  oldName: string,
+  column: NewColumn,
+  schema?: string,
+): Promise<void> {
+  return invoke<void>("db_modify_column", {
+    dbSessionId,
+    database,
+    table,
+    oldName,
+    column,
+    schema: schema ?? null,
+  });
+}
+
+/** DROP a column from a table. */
+export function dbDropColumn(
+  dbSessionId: string,
+  database: string,
+  table: string,
+  column: string,
+  schema?: string,
+): Promise<void> {
+  return invoke<void>("db_drop_column", { dbSessionId, database, table, column, schema: schema ?? null });
+}
+
+/** Create a table (schema used for Postgres, ignored for MySQL). */
+export function dbCreateTable(
+  dbSessionId: string,
+  database: string,
+  schema: string | null,
+  table: string,
+  columns: NewColumn[],
+): Promise<void> {
+  return invoke<void>("db_create_table", { dbSessionId, database, schema, table, columns });
 }
 
 /** Close a live DB session (disconnect pool + drop tunnel). Best-effort. */
@@ -292,13 +394,22 @@ export function dbRunSql(
   });
 }
 
-/** Paginated browse of a single table (SELECT * window + total count). */
+/** Paginated browse of a single table (SELECT * window + total count). Postgres
+ *  also needs `schema` (defaults to "public"); ignored for MySQL. */
 export function dbBrowse(
   dbSessionId: string,
   database: string,
   table: string,
   limit: number,
   offset: number,
+  schema?: string,
 ): Promise<BrowseResult> {
-  return invoke<BrowseResult>("db_browse", { dbSessionId, database, table, limit, offset });
+  return invoke<BrowseResult>("db_browse", {
+    dbSessionId,
+    database,
+    table,
+    limit,
+    offset,
+    schema: schema ?? null,
+  });
 }
