@@ -39,7 +39,17 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publi
 
 ### 🔴 Wajib — urutan disarankan
 1. **Lengkapi file kunci lokal** (§0B) — restore dari repo `all_key_mine` **sebelum** build rilis desktop/Android.
-2. ~~**Publikasikan GitHub Release ber-signing**~~ ✅ **SELESAI** (terakhir `v0.1.0-pre.7`, 2026-07-18 — lihat Fase 16). Prosedur rilis: bump versi di 4 file (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `Cargo.lock`), lalu `git tag vX && git push origin vX`. Secret repo kini **3**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `MOORIX_GOOGLE_CLIENT_SECRET`.
+2. ~~**Publikasikan GitHub Release ber-signing**~~ ✅ **SELESAI** (terakhir `v0.1.0-pre.7`, 2026-07-18 — lihat Fase 16). Secret repo kini **3**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `MOORIX_GOOGLE_CLIENT_SECRET`.
+
+   **📋 Prosedur rilis (WAJIB tiap tag baru):**
+   1. **Bump versi** di 4 file: `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `Cargo.lock` (updater bandingkan versi build ini, bukan nama tag).
+   2. **Commit + push** ke `main`, lalu `git tag vX && git push origin vX` → workflow `release.yml` build+sign 4 platform (~15–30 mnt) dan **membuat Release** dengan `releaseBody` **statis** (placeholder "Desktop build of Moorix…").
+   3. **Tulis ulang release notes SETELAH build selesai** (rilis baru ada setelah build): `gh release edit vX --notes-file <file>`. **Ini WAJIB** — halaman **changelog website** menarik **body GitHub Release** via API dan `parseBody()` hanya membaca **bullet** di bawah heading; tanpa langkah ini, changelog cuma menampilkan placeholder.
+   - **Format release notes (agar terbaca website):**
+     - **Paragraf intro** (1 kalimat) di paling atas → jadi *summary*.
+     - Detail **HARUS bullet** (`- …`) di bawah heading. Heading → label warna: **`### Added`** / New / Feature(s) = hijau · **`### Fixed`** / Fixes / Bugfixes = biru · **`### Changed`** / Improved / Improvements = kuning. Heading lain/tanpa heading = default *Changed*. `**bold**`/`` `code` ``/`[link](url)` otomatis di-strip.
+     - **Isi lengkap**: cantumkan **semua** perubahan/perbaikan yang masuk di rilis itu (dari commit-commit sejak tag sebelumnya), bukan ringkasan singkat.
+   - **Catatan:** message **git tag TIDAK dipakai** website (workspace baca body Release). Contoh yang sudah benar: rilis `v0.1.0` & `v0.1.1-pre.1`.
 3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
 4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.
 
