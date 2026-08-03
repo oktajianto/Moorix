@@ -135,10 +135,7 @@ pnpm tauri build
 - ✅ Encrypted credential vault
 - ✅ Google Drive cloud sync
 - ✅ Port forwarding (Local + Dynamic/SOCKS5)
-
-**In progress**
-
-- 🚧 Database manager (MySQL/MariaDB + PostgreSQL) — next release
+- ✅ Database manager (MySQL/MariaDB + PostgreSQL) — browse, SQL editor, edit rows, structure editing, export/import
 
 **Planned**
 

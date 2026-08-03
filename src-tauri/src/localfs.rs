@@ -29,6 +29,15 @@ pub fn local_home(app: AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The OS Downloads directory (where remote files are saved on "Download").
+#[tauri::command]
+pub fn local_download_dir(app: AppHandle) -> Result<String, String> {
+    app.path()
+        .download_dir()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|e| e.to_string())
+}
+
 /// List a local directory.
 #[tauri::command]
 pub fn local_list(path: String) -> Result<Vec<LocalEntry>, String> {

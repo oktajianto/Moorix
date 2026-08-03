@@ -27,7 +27,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-26
 | 16 | **Google login (OAuth)** di Account & Sync + OAuth app **In production** + CI secret wiring + rilis `v0.1.0-pre.7` | ✅ |
 | 17 | **Google Drive sync nyata** (Push/Pull terenkripsi ke appDataFolder, refresh token silent) + **Account UI** (kartu profil + logout) + README global | ✅ |
 | 18–19 | **SFTP edit in-app (Monaco)** + **Editor multi-file** (tab, minimize, split view) | ✅ (detail di §16 Fase 18–19) |
-| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | 🎯 **pre-rilis 14** · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql). Sisa: uji native menyeluruh (lihat **§19**) |
+| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | 🎯 **rilis 0.1.0** · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql). Sisa: uji native menyeluruh (lihat **§19**) |
 | 21 | **Terminal Search** (Find in terminal, **Ctrl+F**) — cari teks di output SSH/CMD/PowerShell, highlight + next/prev, hotkey overridable | ✅ (implementasi; uji native pending — lihat **§16 Fase 21**) |
 | 22 | **SFTP: dropdown folder induk** di address bar — lompat ke folder induk/root tanpa klik Up berkali-kali | ✅ (implementasi; uji native pending — lihat **§16 Fase 22**) |
 
@@ -43,7 +43,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-26
 3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
 4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.
 
-### 🎯 Target pre-rilis 14
+### 🎯 Target rilis 0.1.0
 - **Database Manager native** (Fase 20) — panel DB ala phpMyAdmin di dalam Moorix: MySQL/MariaDB + PostgreSQL lewat SSH tunnel yang sudah ada, dengan **profil DB** (anak dari profil SSH, kredensial di vault), browse tabel, SQL editor (reuse Monaco), edit/insert/delete, dan export/import `.sql`. **Rancangan lengkap + pentahapan di §19.** Belum mulai koding.
 
 ### 🟡 Opsional — nilai tambah
@@ -592,7 +592,7 @@ Setelah plan ini disetujui:
 - **CI rilis** `.github/workflows/release.yml`: pada push tag `v*`, `tauri-apps/tauri-action` build Windows/macOS(universal)/Linux, **sign** (env `TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` dari secrets), `includeUpdaterJson: true` → upload **`latest.json`**. `prerelease: false` (wajib — endpoint `releases/latest` mengabaikan prerelease).
   - **Aksi user sebelum rilis**: tambah **2 secret** repo — `TAURI_SIGNING_PRIVATE_KEY` (isi `src-tauri/updater-signing.key`) + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (password key, karena key kini **ber-password**); **bump `version`** di `package.json` + `tauri.conf.json` + `Cargo.toml` (updater membandingkan versi ini, bukan tag) sebelum tag & push.
   - Key di-regenerate **ber-password** (pubkey di `tauri.conf.json` sudah diperbarui). Private key + password **RAHASIA & wajib di-backup** — hilang = tak bisa rilis update.
-  - **Versi rilis pertama = `0.1.0-pre.2`** (pra-rilis, sudah di-set di 4 file). Catatan: **flag prerelease GitHub tetap `false`** (endpoint `releases/latest` mengabaikan prerelease) — status pra-rilis dari nomor versi saja. **MSI dibuang** dari `bundle.targets` (WiX menolak versi semver pre-release) → Windows pakai **NSIS** saja (installer yang dipakai updater).
+  - **Rilis publik pertama = `0.1.0`** (naik dari seri `0.1.0-pre.N`, di-set di 4 file). Catatan: **flag prerelease GitHub `false`** (endpoint `releases/latest` dipakai updater). **MSI tetap dibuang** dari `bundle.targets` (dulu WiX menolak semver pre-release; dipertahankan untuk konsistensi) → Windows pakai **NSIS** saja (installer yang dipakai updater).
 
 **Verifikasi Fase 10:** `tsc --noEmit` lolos; `cargo`/`tauri dev` **Finished tanpa warning** & window native jalan; HMR Appearance bersih; `tauri icon` regen sukses (logo mengisi frame). (Uji end-to-end unduh+install butuh rilis ber-signing di GitHub — lihat poin di atas.)
 
@@ -927,7 +927,7 @@ mengubah frontend. Password **tidak pernah** disimpan di store (`moorix.json`); 
 
 ---
 
-## 19. Rancangan: Database Manager native (Fase 20) — 🎯 PRE-RILIS 14 · ⬜ BELUM DIBANGUN
+## 19. Rancangan: Database Manager native (Fase 20) — 🎯 RILIS 0.1.0 · ✅ IMPLEMENTASI TUNTAS
 
 > Direkam atas permintaan user (diskusi 2026-07-24). **Jangan mulai koding dulu** — dokumen ini
 > adalah rencana bertahap yang harus tersusun rapi sebelum implementasi. Target rilis: **v0.1.0-pre.14**.

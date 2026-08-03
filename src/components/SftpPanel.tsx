@@ -137,6 +137,12 @@ export function SftpPanel({
   const [error, setError] = useState("");
 
   const [localPath, setLocalPath] = useState("");
+  // Always-current local path, so a transfer's "done" handler refreshes whatever
+  // the Local pane shows now (not wherever it pointed when the job was queued).
+  const localPathRef = useRef(localPath);
+  localPathRef.current = localPath;
+  // OS Downloads folder — the destination for the "Download" action.
+  const [downloadsDir, setDownloadsDir] = useState<string | null>(null);
   const [localEntries, setLocalEntries] = useState<Entry[]>([]);
   const [localLoading, setLocalLoading] = useState(false);
 
@@ -215,6 +221,7 @@ export function SftpPanel({
       } catch {
         setLocalPath("/");
       }
+      invoke<string>("local_download_dir").then(setDownloadsDir).catch(() => {});
       try {
         const res = await invoke<{ id: string; home: string }>("sftp_open", {
           sessionId,
@@ -315,8 +322,10 @@ export function SftpPanel({
             : x,
         );
       else if (ev.kind === "done") {
+        // Refresh the pane the user is actually looking at: the download may have
+        // gone to the OS Downloads folder while the Local pane sits elsewhere.
         if (job.dir === "up") loadRemote(sftpId, job.remoteDir);
-        else loadLocal(job.localDir);
+        else loadLocal(localPathRef.current);
         afterEnd();
       } else if (ev.kind === "cancelled") {
         afterEnd();
@@ -336,9 +345,9 @@ export function SftpPanel({
     });
   };
 
-  const runTransfer = (dir: XferDir, srcPath: string) => {
+  const runTransfer = (dir: XferDir, srcPath: string, localDirOverride?: string) => {
     if (!sftpId) return;
-    const job: Job = { dir, srcPath, remoteDir: remotePath, localDir: localPath };
+    const job: Job = { dir, srcPath, remoteDir: remotePath, localDir: localDirOverride ?? localPath };
     if (activeRef.current) {
       queueRef.current.push(job);
       setQueued(queueRef.current.length);
@@ -420,6 +429,21 @@ export function SftpPanel({
       ? invoke("local_extract", { path: joinPath(opDir(side), name) })
       : invoke("sftp_extract", { sessionId, path: joinPath(opDir(side), name) });
     p.then(() => opRefresh(side)).catch(opErr);
+  };
+  // Download selected remote item(s) → the OS Downloads folder (falls back to the
+  // Local pane's directory if it couldn't be resolved).
+  const doDownload = (name: string) => {
+    const dest = downloadsDir ?? localPath;
+    getTargets("remote", name).forEach((n) => runTransfer("down", joinPath(remotePath, n), dest));
+  };
+  // Upload selected local item(s) → the Remote pane's current directory.
+  const doUpload = (name: string) => {
+    getTargets("local", name).forEach((n) => runTransfer("up", joinPath(localPath, n)));
+  };
+  // How many items an action will hit (the selection if the clicked item is in it).
+  const selCount = (side: "local" | "remote", name: string) => {
+    const sel = side === "local" ? selLocal : selRemote;
+    return sel.has(name) ? sel.size : 1;
   };
   const doOpenInTerminal = (side: "local" | "remote", name: string) => {
     if (side !== "remote") return;
@@ -731,11 +755,21 @@ export function SftpPanel({
           >
             {menu.name && (
               <>
+                {menu.side === "remote" ? (
+                  <MenuItem disabled={!sftpId} onClick={() => { doDownload(menu.name!); setMenu(null); }}>
+                    Download{selCount("remote", menu.name) > 1 ? ` (${selCount("remote", menu.name)})` : ""}
+                  </MenuItem>
+                ) : (
+                  <MenuItem disabled={!sftpId} onClick={() => { doUpload(menu.name!); setMenu(null); }}>
+                    Upload{selCount("local", menu.name) > 1 ? ` (${selCount("local", menu.name)})` : ""}
+                  </MenuItem>
+                )}
                 {menu.side === "remote" && (
                   <MenuItem onClick={() => { doOpenInTerminal(menu.side, menu.name!); setMenu(null); }}>
                     Open in Terminal
                   </MenuItem>
                 )}
+                <div className="my-1 border-t" style={{ borderColor: "var(--m-border)" }} />
                 <MenuItem onClick={() => { doCopy(menu.side, menu.name!); setMenu(null); }}>
                   Copy
                 </MenuItem>

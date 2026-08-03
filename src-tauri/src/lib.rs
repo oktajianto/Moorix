@@ -74,6 +74,7 @@ pub fn run() {
             sftp::sftp_extract,
             sftp::sftp_paste,
             localfs::local_home,
+            localfs::local_download_dir,
             localfs::local_list,
             localfs::local_mkdir,
             localfs::local_rename,
