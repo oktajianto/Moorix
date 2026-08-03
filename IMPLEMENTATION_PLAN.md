@@ -3,7 +3,7 @@
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
 > Satu codebase yang menjangkau desktop **dan** mobile.
 
-Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-26
+Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publik pertama: `v0.1.0` (2026-08-03)**
 
 ---
 
@@ -22,12 +22,12 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-26
 | 7B | Android build → **signed release APK** | ✅ |
 | 8 | Serial (desktop) + Telnet transports | ✅ |
 | 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (SFTP ✅ Fase 11 · sync ✅ Fase 17; **sisa**: Remote -R, jump host ⬜) |
-| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ✅ — terakhir `v0.1.0-pre.7`) |
+| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ✅ — terakhir **`v0.1.0`** rilis publik, 2026-08-03) |
 | 11 | **SFTP file manager** (dual-pane lokal/remote, upload/download rekursif, DnD, ops remote) | ✅ T1 backend · T2 panel+navigasi · T3 transfer rekursif+progress+cancel · T4 drag-and-drop (in-app + OS drop) · T5 ops mkdir/rename/delete + menu klik-kanan |
 | 16 | **Google login (OAuth)** di Account & Sync + OAuth app **In production** + CI secret wiring + rilis `v0.1.0-pre.7` | ✅ |
 | 17 | **Google Drive sync nyata** (Push/Pull terenkripsi ke appDataFolder, refresh token silent) + **Account UI** (kartu profil + logout) + README global | ✅ |
 | 18–19 | **SFTP edit in-app (Monaco)** + **Editor multi-file** (tab, minimize, split view) | ✅ (detail di §16 Fase 18–19) |
-| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | 🎯 **rilis 0.1.0** · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql). Sisa: uji native menyeluruh (lihat **§19**) |
+| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | ✅ **rilis `0.1.0`** (2026-08-03) · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql). Sisa: uji native menyeluruh (lihat **§19**) |
 | 21 | **Terminal Search** (Find in terminal, **Ctrl+F**) — cari teks di output SSH/CMD/PowerShell, highlight + next/prev, hotkey overridable | ✅ (implementasi; uji native pending — lihat **§16 Fase 21**) |
 | 22 | **SFTP: dropdown folder induk** di address bar — lompat ke folder induk/root tanpa klik Up berkali-kali | ✅ (implementasi; uji native pending — lihat **§16 Fase 22**) |
 
@@ -43,8 +43,8 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-07-26
 3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
 4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.
 
-### 🎯 Target rilis 0.1.0
-- **Database Manager native** (Fase 20) — panel DB ala phpMyAdmin di dalam Moorix: MySQL/MariaDB + PostgreSQL lewat SSH tunnel yang sudah ada, dengan **profil DB** (anak dari profil SSH, kredensial di vault), browse tabel, SQL editor (reuse Monaco), edit/insert/delete, dan export/import `.sql`. **Rancangan lengkap + pentahapan di §19.** Belum mulai koding.
+### ✅ Rilis 0.1.0 — TERBIT (2026-08-03)
+- **Database Manager native** (Fase 20) — panel DB ala phpMyAdmin di dalam Moorix: MySQL/MariaDB + PostgreSQL lewat SSH tunnel yang sudah ada, dengan **profil DB** (anak dari profil SSH, kredensial di vault), browse tabel, SQL editor (reuse Monaco), edit/insert/delete, dan export/import `.sql`. **Rancangan lengkap + pentahapan di §19.** ✅ **Implementasi tuntas & dirilis di `v0.1.0`** (detail changelog di §16 "Rilis publik 0.1.0"). Sisa: uji native menyeluruh.
 
 ### 🟡 Opsional — nilai tambah
 - ~~**Config sync**: bangun server sync minimal~~ ✅ **SELESAI via Google Drive** (Fase 17) — Push/Pull E2E-encrypted ke appDataFolder; tanpa server sendiri.
@@ -814,6 +814,24 @@ Setelah plan ini disetujui:
 - ✅ **UI dropdown** di toolbar `FileHalf`: tombol **chevron** di ujung address bar (di samping teks path). Klik → menu daftar folder (ikon `Folder` + nama folder, `title` = path penuh), folder aktif ditandai **"current"** (non-navigasi). Pilih salah satu → `onPath(folder)` → pane pindah + listing dimuat ulang. Menu **tutup** saat klik di luar / **Esc**. Berlaku untuk **kedua pane** (Local & Remote); tombol dinonaktifkan saat pane remote belum tersambung (`disabled`).
 - ✅ **Selection dibersihkan saat lompat** — `onPath` di kedua sisi kini `setSel*(new Set())` dulu sebelum set path (juga memperbaiki input-path manual: seleksi lama tak lagi menyorot nama yang tak ada di folder baru).
 - ✅ **Verifikasi:** `tsc --noEmit` bersih + `pnpm build` lolos. **Uji E2E native pending** (SFTP butuh backend Tauri — sama seperti fitur SFTP lain).
+
+---
+
+### Rilis publik 0.1.0 ✅ (2026-08-03)
+> Seri pra-rilis `0.1.0-pre.N` lulus jadi **rilis publik pertama `0.1.0`** (tag `v0.1.0` di-push → workflow `release.yml` build+sign 4 platform, run **30790649702** sukses, 13 asset, `prerelease: false`). Sorotan sejak `pre.13`:
+
+- ✅ **Database Manager native (Fase 20)** — panel ala phpMyAdmin di dalam Moorix untuk **MySQL/MariaDB + PostgreSQL** lewat SSH tunnel yang sudah ada (127.0.0.1, tak ada port DB terekspos). Profil DB = anak profil SSH, kredensial di vault. Meliputi: tree database/tabel (grup per-schema di PG), SQL editor (autocomplete sadar-schema + tipe ramah), browse + edit/insert/delete inline (Browse↔SQL tersinkron), **Structure** (add/edit/drop kolom, posisi First/After di MySQL, NOT NULL, DEFAULT), **enum terpandu** (di dialog kolom; PG create/extend type idempoten, boleh nilai kosong asal ada ≥1 non-kosong), create/drop/rename tabel & database, dan **export/import `.sql`** (mysqldump/mysql · pg_dump/psql; tabel hasil import langsung muncul di sidebar). Detail pentahapan 20A–20D di **§19**.
+- ✅ **SFTP: download + aksi multi-select** — download file & folder (rekursif, progres) langsung ke **folder Downloads OS**, satu atau banyak sekaligus; **multi-delete** dan **multi-compress** (beberapa item → satu arsip `.zip`/`.tar`).
+- ✅ **Terminal Search (Fase 21)** + **dropdown folder induk SFTP (Fase 22)**.
+- ✅ **Fix compress/extract `.zip`/`.tar` SFTP** — dulu gagal "ssh session not found" (id SFTP dicocokkan ke map sesi SSH); kini pakai id sesi SSH. Di Windows arsiver dipatok ke **System32 bsdtar** (GNU tar bawaan salah label & tak bisa baca zip).
+- ✅ **Keamanan kredensial DB** — password ke tool CLI lewat file **mode-600** (`--defaults-extra-file` / `.pgpass` / `PGPASSFILE`), tak pernah di argv (bocor lewat daftar proses).
+- ✅ **Versi `0.1.0`** di 4 file (`package.json`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`) — kata "pre" dihapus; README menandai DB manager **Completed**.
+- ✅ **Catatan changelog website:** halaman changelog Moorix menarik **body GitHub Release** via API dan `parseBody()` hanya membaca **bullet** di bawah heading `## Added`/`Fixed`/`Changed` (paragraf jadi summary). Body rilis `v0.1.0` sudah ditulis ulang mengikuti format itu (bukan dari message tag — `release.yml` memakai `releaseBody` statis).
+
+### Pra-rilis 0.1.1-pre.1 ✅ (2026-08-03)
+> Perbaikan bug pasca-0.1.0, di-bump ke `0.1.1-pre.1` (4 file versi) + tag `v0.1.1-pre.1`.
+
+- ✅ **Fix modal Add/Edit kolom (Structure) — tombol Save/Cancel selalu terlihat.** Saat type **enum** dengan banyak nilai, isi modal meluber sampai Save/Cancel keluar viewport. `ColumnDialog` (`DatabasePanel.tsx`) kini kontainer **flex-column** `max-h-[88vh]`; body (Name/Type/editor enum/NOT NULL/Default/Position) jadi area **scroll** (`min-h-0 flex-1 overflow-auto`), sedangkan header & footer (Cancel/Save) **pinned** (tak ikut scroll). Pola sama dgn Create table/Create enum dialog. `tsc --noEmit` lolos.
 
 ---
 
