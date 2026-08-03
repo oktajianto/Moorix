@@ -65,6 +65,10 @@ export type ColumnDef = {
   default: string | null;
   extra: string;
   comment: string;
+  /** Postgres enum columns: the enum type's values (so the UI can edit it as a
+   *  guided enum). Null for non-enum columns and for MySQL (values are inline in
+   *  dataType). */
+  enumValues?: string[] | null;
 };
 export type IndexDef = { name: string; columns: string[]; unique: boolean };
 export type ForeignKeyDef = {
@@ -319,15 +323,26 @@ export type NewColumn = {
   autoIncrement: boolean;
 };
 
-/** ADD a column to an existing table. Postgres also needs `schema`. */
+/** ADD a column to an existing table. Postgres also needs `schema`. `first`/
+ *  `after` position the new column (MySQL/MariaDB only; Postgres appends). */
 export function dbAddColumn(
   dbSessionId: string,
   database: string,
   table: string,
   column: NewColumn,
   schema?: string,
+  first?: boolean,
+  after?: string,
 ): Promise<void> {
-  return invoke<void>("db_add_column", { dbSessionId, database, table, column, schema: schema ?? null });
+  return invoke<void>("db_add_column", {
+    dbSessionId,
+    database,
+    table,
+    column,
+    schema: schema ?? null,
+    first: first ?? false,
+    after: after ?? null,
+  });
 }
 
 /** MODIFY a column (rename + redefine). `oldName` is the current name. */
@@ -358,6 +373,19 @@ export function dbDropColumn(
   schema?: string,
 ): Promise<void> {
   return invoke<void>("db_drop_column", { dbSessionId, database, table, column, schema: schema ?? null });
+}
+
+/** Create or extend a PostgreSQL ENUM type: creates `schema.name` if missing,
+ *  else appends any new values (Postgres can't remove/rename values). Postgres-
+ *  only; MySQL uses inline enum column types. */
+export function dbApplyEnum(
+  dbSessionId: string,
+  database: string,
+  schema: string | null,
+  name: string,
+  values: string[],
+): Promise<void> {
+  return invoke<void>("db_apply_enum", { dbSessionId, database, schema, name, values });
 }
 
 /** Create a table (schema used for Postgres, ignored for MySQL). */

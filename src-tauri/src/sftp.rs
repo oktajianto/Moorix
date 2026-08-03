@@ -599,19 +599,30 @@ async fn do_download(
 #[tauri::command]
 pub async fn sftp_compress(
     state: State<'_, AppState>,
-    sftp_id: String,
+    session_id: String,
     dir: String,
     dest: String,
     names: Vec<String>,
 ) -> Result<(), String> {
-    let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
+    // Runs over an SSH exec channel, so it needs the SSH session id (not the SFTP id).
+    let handle = state.ssh_handle(&session_id).ok_or_else(|| "ssh session not found".to_string())?;
     let channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
     
-    // Build tar zip command
+    // Choose the archiver from the destination extension: zip needs the `zip`
+    // binary; everything else uses `tar` (present on virtually every server).
     let names_escaped: Vec<String> = names.iter().map(|n| format!("'{}'", n.replace("'", "'\''"))).collect();
     let dest_escaped = format!("'{}'", dest.replace("'", "'\''"));
-    let cmd = format!("cd '{}' && zip -r {} {}", dir.replace("'", "'\''"), dest_escaped, names_escaped.join(" "));
-    
+    let dir_escaped = format!("'{}'", dir.replace("'", "'\''"));
+    let joined = names_escaped.join(" ");
+    let cmd = if dest.ends_with(".zip") {
+        format!("cd {} && zip -r {} {}", dir_escaped, dest_escaped, joined)
+    } else if dest.ends_with(".tar") {
+        format!("cd {} && tar -cf {} {}", dir_escaped, dest_escaped, joined)
+    } else {
+        // .tar.gz / .tgz / anything else → gzip-compressed tar
+        format!("cd {} && tar -czf {} {}", dir_escaped, dest_escaped, joined)
+    };
+
     channel.exec(true, &*cmd).await.map_err(|e| e.to_string())?;
     wait_channel(channel).await
 }
@@ -619,21 +630,23 @@ pub async fn sftp_compress(
 #[tauri::command]
 pub async fn sftp_extract(
     state: State<'_, AppState>,
-    sftp_id: String,
+    session_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
+    let handle = state.ssh_handle(&session_id).ok_or_else(|| "ssh session not found".to_string())?;
     let channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
     
     let path_escaped = format!("'{}'", path.replace("'", "'\''"));
     let dir_escaped = format!("'{}'", path.rsplit_once('/').unwrap_or((".", &path)).0.replace("'", "'\''"));
     
+    // `tar -xf` auto-detects the compression (gzip/bzip2/xz) and also handles a
+    // plain `.tar` — forcing `-z` broke non-gzipped tarballs. Zip needs `unzip`.
     let cmd = if path.ends_with(".zip") {
         format!("cd {} && unzip -o {}", dir_escaped, path_escaped)
     } else {
-        format!("cd {} && tar -xzf {}", dir_escaped, path_escaped)
+        format!("cd {} && tar -xf {}", dir_escaped, path_escaped)
     };
-    
+
     channel.exec(true, &*cmd).await.map_err(|e| e.to_string())?;
     wait_channel(channel).await
 }
@@ -641,13 +654,13 @@ pub async fn sftp_extract(
 #[tauri::command]
 pub async fn sftp_paste(
     state: State<'_, AppState>,
-    sftp_id: String,
+    session_id: String,
     op: String,
     src_dir: String,
     dest_dir: String,
     names: Vec<String>,
 ) -> Result<(), String> {
-    let handle = state.ssh_handle(&sftp_id).ok_or_else(|| "ssh session not found".to_string())?;
+    let handle = state.ssh_handle(&session_id).ok_or_else(|| "ssh session not found".to_string())?;
     let channel = handle.lock().await.channel_open_session().await.map_err(|e| e.to_string())?;
     
     let cmd_base = if op == "cut" { "mv" } else { "cp -r" };
@@ -662,12 +675,19 @@ pub async fn sftp_paste(
 
 async fn wait_channel(mut channel: russh::Channel<russh::client::Msg>) -> Result<(), String> {
     let mut exit_status = 0;
+    let mut stderr: Vec<u8> = Vec::new();
     loop {
         if let Some(msg) = channel.wait().await {
             match msg {
                 russh::ChannelMsg::ExitStatus { exit_status: s } => exit_status = s,
+                // Collect stderr so a failure explains itself (e.g. "zip: command not found").
+                russh::ChannelMsg::ExtendedData { data, ext } => {
+                    if ext == 1 {
+                        stderr.extend_from_slice(&data);
+                    }
+                }
                 russh::ChannelMsg::Close => break,
-                russh::ChannelMsg::Eof => {},
+                russh::ChannelMsg::Eof => {}
                 _ => {}
             }
         } else {
@@ -675,7 +695,13 @@ async fn wait_channel(mut channel: russh::Channel<russh::client::Msg>) -> Result
         }
     }
     if exit_status != 0 {
-        return Err(format!("Command failed with status {}", exit_status));
+        let err = String::from_utf8_lossy(&stderr);
+        let err = err.trim();
+        return Err(if err.is_empty() {
+            format!("Command failed with status {}", exit_status)
+        } else {
+            format!("Command failed (status {}): {}", exit_status, err)
+        });
     }
     Ok(())
 }

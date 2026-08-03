@@ -718,11 +718,14 @@ async fn pg_column_types(
 ) -> Result<Vec<(String, String)>, String> {
     let rows = client
         .query(
-            "SELECT column_name::text, udt_name::text, \
-             character_maximum_length::int, numeric_precision::int, numeric_scale::int \
-             FROM information_schema.columns \
-             WHERE table_schema::text = $1 AND table_name::text = $2 \
-             ORDER BY ordinal_position",
+            "SELECT c.column_name::text, c.udt_name::text, \
+             c.character_maximum_length::int, c.numeric_precision::int, c.numeric_scale::int, \
+             COALESCE(t.typtype = 'e', false) AS is_enum \
+             FROM information_schema.columns c \
+             LEFT JOIN pg_namespace n ON n.nspname::text = c.udt_schema::text \
+             LEFT JOIN pg_type t ON t.typname::text = c.udt_name::text AND t.typnamespace = n.oid \
+             WHERE c.table_schema::text = $1 AND c.table_name::text = $2 \
+             ORDER BY c.ordinal_position",
             &[&schema, &table],
         )
         .await
@@ -732,7 +735,13 @@ async fn pg_column_types(
         .map(|r| {
             let name: String = r.get(0);
             let udt: String = r.get(1);
-            (name, pg_friendly_type(&udt, r.get(2), r.get(3), r.get(4)))
+            let is_enum: bool = r.get(5);
+            let ty = if is_enum {
+                "enum".to_string()
+            } else {
+                pg_friendly_type(&udt, r.get(2), r.get(3), r.get(4))
+            };
+            (name, ty)
         })
         .collect())
 }
@@ -946,6 +955,10 @@ pub struct ColumnDef {
     /// e.g. "auto_increment", "on update CURRENT_TIMESTAMP".
     pub extra: String,
     pub comment: String,
+    /// For a Postgres column whose type is an ENUM: the enum's values (so the UI
+    /// can edit it as a guided enum). None for non-enum columns and for MySQL
+    /// (whose enum values already live inline in `data_type`).
+    pub enum_values: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -1022,6 +1035,31 @@ pub async fn db_table_structure(
             )
             .await
             .map_err(|e| e.to_string())?;
+
+        // Enum columns → their values (so the UI can edit them as a guided enum).
+        let enum_rows = client
+            .query(
+                "SELECT a.attname::text, e.enumlabel::text FROM pg_attribute a \
+                 JOIN pg_type ty ON ty.oid = a.atttypid AND ty.typtype = 'e' \
+                 JOIN pg_enum e ON e.enumtypid = ty.oid \
+                 JOIN pg_class c ON c.oid = a.attrelid \
+                 JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname::text = $1 AND c.relname::text = $2 \
+                 AND a.attnum > 0 AND NOT a.attisdropped \
+                 ORDER BY a.attnum, e.enumsortorder",
+                &[&sch, &table],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut enum_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in &enum_rows {
+            enum_map
+                .entry(r.get::<_, String>(0))
+                .or_default()
+                .push(r.get::<_, String>(1));
+        }
+
         let columns: Vec<ColumnDef> = col_rows
             .iter()
             .map(|r| {
@@ -1042,6 +1080,7 @@ pub async fn db_table_structure(
                 } else {
                     String::new()
                 };
+                let enum_values = enum_map.get(&name).cloned();
                 ColumnDef {
                     name,
                     data_type: pg_friendly_type(&udt, r.get(4), r.get(5), r.get(6)),
@@ -1050,6 +1089,7 @@ pub async fn db_table_structure(
                     default,
                     extra,
                     comment: String::new(),
+                    enum_values,
                 }
             })
             .collect();
@@ -1138,6 +1178,7 @@ pub async fn db_table_structure(
                 default,
                 extra,
                 comment,
+                enum_values: None,
             }
         })
         .collect();
@@ -2088,7 +2129,8 @@ fn ddl_qualified(pg: bool, database: &str, schema: &Option<String>, table: &str)
     }
 }
 
-/// ADD a column to an existing table.
+/// ADD a column to an existing table. `first`/`after` position the new column
+/// (MySQL/MariaDB only — Postgres always appends and ignores both).
 #[tauri::command]
 pub async fn db_add_column(
     state: State<'_, AppState>,
@@ -2097,6 +2139,8 @@ pub async fn db_add_column(
     table: String,
     column: NewColumn,
     schema: Option<String>,
+    first: Option<bool>,
+    after: Option<String>,
 ) -> Result<(), String> {
     let sess = state
         .db_session(&db_session_id)
@@ -2104,11 +2148,19 @@ pub async fn db_add_column(
     let pg = sess.is_pg();
     let def = build_column_def(&column, pg)?;
     let qualified = ddl_qualified(pg, &database, &schema, &table);
-    let sql = format!("ALTER TABLE {qualified} ADD COLUMN {def}");
 
     if pg {
+        // Postgres has no ADD COLUMN FIRST/AFTER — the column always lands last.
+        let sql = format!("ALTER TABLE {qualified} ADD COLUMN {def}");
         let client = sess.pg()?.client(&database).await?;
         return client.batch_execute(&sql).await.map_err(|e| e.to_string());
+    }
+
+    let mut sql = format!("ALTER TABLE {qualified} ADD COLUMN {def}");
+    if first.unwrap_or(false) {
+        sql.push_str(" FIRST");
+    } else if let Some(col) = after.as_ref().filter(|c| !c.trim().is_empty()) {
+        sql.push_str(&format!(" AFTER {}", quote_ident(col)));
     }
     use mysql_async::prelude::Queryable;
     let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
@@ -2199,4 +2251,69 @@ pub async fn db_drop_column(
     use mysql_async::prelude::Queryable;
     let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
     conn.query_drop(sql).await.map_err(|e| e.to_string())
+}
+
+/// Create or extend a PostgreSQL ENUM type. If the type doesn't exist it's
+/// created (`CREATE TYPE schema.name AS ENUM (...)`); if it does, any values not
+/// already present are appended (`ALTER TYPE … ADD VALUE IF NOT EXISTS`, each as
+/// its own statement so it isn't wrapped in a transaction block). Postgres can't
+/// remove/rename enum values, so removals in the UI are ignored. Postgres-only —
+/// MySQL/MariaDB use inline `enum(...)` column types instead.
+#[tauri::command]
+pub async fn db_apply_enum(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    values: Vec<String>,
+) -> Result<(), String> {
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    if !sess.is_pg() {
+        return Err("enum types are PostgreSQL-only here".to_string());
+    }
+    if name.trim().is_empty() {
+        return Err("enum type needs a name".to_string());
+    }
+    // Keep empty members (e.g. enum('a','')) — only require one non-empty value.
+    let vals: Vec<String> = values.iter().map(|v| v.trim().to_string()).collect();
+    if !vals.iter().any(|v| !v.is_empty()) {
+        return Err("an enum needs at least one non-empty value".to_string());
+    }
+    let sch = schema.unwrap_or_else(|| "public".to_string());
+    let client = sess.pg()?.client(&database).await?;
+
+    let exists = !client
+        .query(
+            "SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+             WHERE t.typname::text = $1 AND n.nspname::text = $2 AND t.typtype = 'e'",
+            &[&name, &sch],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .is_empty();
+
+    if !exists {
+        let lits = vals.iter().map(|v| pg_quote_literal(v)).collect::<Vec<_>>().join(", ");
+        let sql = format!(
+            "CREATE TYPE {}.{} AS ENUM ({lits})",
+            pg_quote_ident(&sch),
+            pg_quote_ident(&name)
+        );
+        return client.batch_execute(&sql).await.map_err(|e| e.to_string());
+    }
+
+    // Existing type: append any missing values (one statement each).
+    for v in &vals {
+        let sql = format!(
+            "ALTER TYPE {}.{} ADD VALUE IF NOT EXISTS {}",
+            pg_quote_ident(&sch),
+            pg_quote_ident(&name),
+            pg_quote_literal(v)
+        );
+        client.simple_query(&sql).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

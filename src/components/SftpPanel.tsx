@@ -399,26 +399,26 @@ export function SftpPanel({
     } else {
       const p = side === "local"
         ? invoke("local_paste", { op: clipboard.op, srcDir: clipboard.baseDir, destDir: opDir(side), names: clipboard.paths })
-        : invoke("sftp_paste", { sftpId, op: clipboard.op, srcDir: clipboard.baseDir, destDir: opDir(side), names: clipboard.paths });
+        : invoke("sftp_paste", { sessionId, op: clipboard.op, srcDir: clipboard.baseDir, destDir: opDir(side), names: clipboard.paths });
       p.then(() => {
         opRefresh(side);
         if (clipboard.op === "cut") setClipboard(null);
       }).catch(opErr);
     }
   };
-  const doCompress = (side: "local" | "remote", name: string) => {
-    const zipName = window.prompt("Archive name:", name + ".zip")?.trim();
-    if (!zipName) return;
+  const doCompress = (side: "local" | "remote", name: string, ext: "zip" | "tar.gz") => {
+    const archive = window.prompt("Archive name:", `${name}.${ext}`)?.trim();
+    if (!archive) return;
     const paths = getTargets(side, name);
     const p = side === "local"
-      ? invoke("local_compress", { dir: opDir(side), dest: zipName, names: paths })
-      : invoke("sftp_compress", { sftpId, dir: opDir(side), dest: zipName, names: paths });
+      ? invoke("local_compress", { dir: opDir(side), dest: archive, names: paths })
+      : invoke("sftp_compress", { sessionId, dir: opDir(side), dest: archive, names: paths });
     p.then(() => opRefresh(side)).catch(opErr);
   };
   const doExtract = (side: "local" | "remote", name: string) => {
     const p = side === "local"
       ? invoke("local_extract", { path: joinPath(opDir(side), name) })
-      : invoke("sftp_extract", { sftpId, path: joinPath(opDir(side), name) });
+      : invoke("sftp_extract", { sessionId, path: joinPath(opDir(side), name) });
     p.then(() => opRefresh(side)).catch(opErr);
   };
   const doOpenInTerminal = (side: "local" | "remote", name: string) => {
@@ -473,17 +473,27 @@ export function SftpPanel({
   };
 
   const doDelete = (side: "local" | "remote", name: string) => {
-    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
-    const path = joinPath(opDir(side), name);
-    const p =
-      side === "local"
+    // Delete every selected item (or just the clicked one if it isn't selected).
+    const targets = getTargets(side, name);
+    const label = targets.length === 1 ? `"${targets[0]}"` : `${targets.length} items`;
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    const removeOne = (n: string) => {
+      const path = joinPath(opDir(side), n);
+      return side === "local"
         ? invoke("local_remove", { path })
         : invoke("sftp_remove", { sftpId, path });
-    p.then(() => {
+    };
+    void (async () => {
+      try {
+        // Sequential — the SFTP subsystem shares a single channel.
+        for (const n of targets) await removeOne(n);
+      } catch (e) {
+        opErr(e);
+      }
       opRefresh(side);
       if (side === "local") setSelLocal(new Set());
       else setSelRemote(new Set());
-    }).catch(opErr);
+    })();
   };
 
   const doChecksum = (side: "local" | "remote", name: string) => {
@@ -733,10 +743,13 @@ export function SftpPanel({
                   Cut
                 </MenuItem>
                 <div className="my-1 border-t" style={{ borderColor: "var(--m-border)" }} />
-                <MenuItem onClick={() => { doCompress(menu.side, menu.name!); setMenu(null); }}>
-                  Compress to ZIP
+                <MenuItem onClick={() => { doCompress(menu.side, menu.name!, "zip"); setMenu(null); }}>
+                  Compress to .zip
                 </MenuItem>
-                {(menu.name.endsWith(".zip") || menu.name.endsWith(".tar.gz") || menu.name.endsWith(".tar")) && (
+                <MenuItem onClick={() => { doCompress(menu.side, menu.name!, "tar.gz"); setMenu(null); }}>
+                  Compress to .tar.gz
+                </MenuItem>
+                {(menu.name.endsWith(".zip") || menu.name.endsWith(".tar.gz") || menu.name.endsWith(".tgz") || menu.name.endsWith(".tar")) && (
                   <MenuItem onClick={() => { doExtract(menu.side, menu.name!); setMenu(null); }}>
                     Extract
                   </MenuItem>

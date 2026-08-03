@@ -140,17 +140,42 @@ pub fn local_checksum(path: String) -> Result<String, String> {
 }
 
 
+/// The `tar` to use for local archives. On Windows we pin the System32 bsdtar
+/// (libarchive): it creates real `.zip`/`.tar.gz` from the extension (`-a`) and
+/// extracts any format (`-xf`). A Git/MSYS **GNU** tar that happens to be earlier
+/// in PATH can't create or read zips, so relying on bare `tar` silently produced
+/// a mislabeled tar (or failed on extract) depending on how the app was launched.
+fn tar_bin() -> std::ffi::OsString {
+    #[cfg(windows)]
+    {
+        if let Ok(root) = std::env::var("SystemRoot") {
+            let p = std::path::Path::new(&root).join("System32").join("tar.exe");
+            if p.exists() {
+                return p.into_os_string();
+            }
+        }
+    }
+    std::ffi::OsString::from("tar")
+}
+
 #[tauri::command]
 pub fn local_compress(dir: String, dest: String, names: Vec<String>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("tar");
+    let mut cmd = std::process::Command::new(tar_bin());
     cmd.current_dir(&dir);
+    // -a picks the format from `dest`'s extension (.zip → zip, .tar.gz → gzip, …).
     cmd.arg("-a").arg("-c").arg("-f").arg(&dest);
     for name in names {
         cmd.arg(&name);
     }
-    let status = cmd.status().map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err(format!("tar failed: {}", status));
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        return Err(if err.is_empty() {
+            format!("tar failed: {}", out.status)
+        } else {
+            format!("tar failed: {}", err)
+        });
     }
     Ok(())
 }
@@ -159,12 +184,19 @@ pub fn local_compress(dir: String, dest: String, names: Vec<String>) -> Result<(
 pub fn local_extract(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     let dir = p.parent().unwrap_or(std::path::Path::new("."));
-    let mut cmd = std::process::Command::new("tar");
+    let mut cmd = std::process::Command::new(tar_bin());
     cmd.current_dir(dir);
+    // -xf auto-detects the archive format (zip, tar, tar.gz, …) with bsdtar.
     cmd.arg("-x").arg("-f").arg(p.file_name().unwrap());
-    let status = cmd.status().map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err(format!("tar failed: {}", status));
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        return Err(if err.is_empty() {
+            format!("tar failed: {}", out.status)
+        } else {
+            format!("tar failed: {}", err)
+        });
     }
     Ok(())
 }

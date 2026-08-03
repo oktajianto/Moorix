@@ -119,6 +119,7 @@ pub fn run() {
             db::db_add_column,
             db::db_modify_column,
             db::db_drop_column,
+            db::db_apply_enum,
             open_devtools,
         ])
         .run(tauri::generate_context!())
