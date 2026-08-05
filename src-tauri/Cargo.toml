@@ -1,6 +1,6 @@
 [package]
 name = "moorix"
-version = "0.1.1-pre.1"
+version = "0.1.1-pre.2"
 description = "Moorix — cross-platform terminal & SSH client"
 authors = ["Hammam Oktajianto"]
 license-file = "../LICENSE"

@@ -54,6 +54,20 @@ pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
                         secrets_map.insert(id.to_string(), secret);
                     }
                 }
+                // Each profile's DB children keep their password in the keychain
+                // keyed by the DBProfile id (see App.saveProfile). Gather those
+                // too — otherwise a pull on another device restores the DB
+                // profiles but not their passwords, so Connect can't log in.
+                if let Some(dbs) = p.get("databases").and_then(|d| d.as_array()) {
+                    for d in dbs {
+                        if let Some(did) = d.get("id").and_then(|id| id.as_str()) {
+                            #[cfg(desktop)]
+                            if let Ok(Some(secret)) = crate::secrets::backend::get(did) {
+                                secrets_map.insert(did.to_string(), secret);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

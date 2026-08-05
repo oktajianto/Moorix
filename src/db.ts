@@ -308,9 +308,20 @@ export function dbRenameDatabase(
   return invoke<void>("db_rename_database", { dbSessionId, oldName, newName });
 }
 
-/** Create a database. */
-export function dbCreateDatabase(dbSessionId: string, name: string): Promise<void> {
-  return invoke<void>("db_create_database", { dbSessionId, name });
+/** Create a database. `charset`/`collation` are optional (MySQL: CHARACTER
+ *  SET/COLLATE; PostgreSQL: `charset` = ENCODING). */
+export function dbCreateDatabase(
+  dbSessionId: string,
+  name: string,
+  charset?: string,
+  collation?: string,
+): Promise<void> {
+  return invoke<void>("db_create_database", {
+    dbSessionId,
+    name,
+    charset: charset || null,
+    collation: collation || null,
+  });
 }
 
 /** A column spec for creating a table. */

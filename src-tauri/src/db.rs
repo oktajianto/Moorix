@@ -2019,31 +2019,67 @@ pub struct NewColumn {
 }
 
 /// Create a database. Engine-aware quoting; Postgres runs it outside a
-/// transaction via the simple protocol.
+/// transaction via the simple protocol. `charset`/`collation` are optional:
+/// MySQL maps them to `CHARACTER SET`/`COLLATE`, Postgres maps `charset` to
+/// `ENCODING` (and `collation` to `LC_COLLATE`/`LC_CTYPE`), building from
+/// `template0` so a non-default locale/encoding is allowed.
 #[tauri::command]
 pub async fn db_create_database(
     state: State<'_, AppState>,
     db_session_id: String,
     name: String,
+    charset: Option<String>,
+    collation: Option<String>,
 ) -> Result<(), String> {
     let sess = state
         .db_session(&db_session_id)
         .ok_or_else(|| "db session not found".to_string())?;
 
+    // charset/collation are interpolated into DDL (identifiers in MySQL, string
+    // literals in PG) — restrict to a safe alphabet to prevent injection.
+    fn clean(v: Option<String>) -> Result<Option<String>, String> {
+        match v.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) if s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => {
+                Ok(Some(s.to_string()))
+            }
+            Some(s) => Err(format!("invalid charset/collation name: {s}")),
+        }
+    }
+    let charset = clean(charset)?;
+    let collation = clean(collation)?;
+
     if sess.is_pg() {
         let pg = sess.pg()?;
         let client = pg.client(&pg.default_db).await?;
+        let mut sql = format!("CREATE DATABASE {}", pg_quote_ident(&name));
+        // A non-default encoding/locale must be cloned from template0.
+        if charset.is_some() || collation.is_some() {
+            sql.push_str(" TEMPLATE template0");
+        }
+        if let Some(enc) = &charset {
+            sql.push_str(&format!(" ENCODING {}", pg_quote_literal(enc)));
+        }
+        if let Some(col) = &collation {
+            let lit = pg_quote_literal(col);
+            sql.push_str(&format!(" LC_COLLATE {lit} LC_CTYPE {lit}"));
+        }
         return client
-            .batch_execute(&format!("CREATE DATABASE {}", pg_quote_ident(&name)))
+            .batch_execute(&sql)
             .await
             .map_err(|e| e.to_string());
     }
 
     use mysql_async::prelude::Queryable;
     let mut conn = sess.mysql()?.get_conn().await.map_err(|e| e.to_string())?;
-    conn.query_drop(format!("CREATE DATABASE {}", quote_ident(&name)))
-        .await
-        .map_err(|e| e.to_string())
+    let mut sql = format!("CREATE DATABASE {}", quote_ident(&name));
+    if let Some(cs) = &charset {
+        sql.push_str(&format!(" CHARACTER SET {cs}"));
+    }
+    if let Some(col) = &collation {
+        sql.push_str(&format!(" COLLATE {col}"));
+    }
+    conn.query_drop(sql).await.map_err(|e| e.to_string())
 }
 
 /// Create a table from a column spec. `schema` is used for Postgres (defaults to
