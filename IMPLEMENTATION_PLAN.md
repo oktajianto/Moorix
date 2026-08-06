@@ -47,6 +47,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publi
    2. **Commit + push** ke `main`, lalu `git tag vX && git push origin vX` → workflow `release.yml` build+sign 4 platform (~15–30 mnt) dan **membuat Release** dengan `releaseBody` **statis** (placeholder "Desktop build of Moorix…").
    3. **Tulis ulang release notes SETELAH build selesai** (rilis baru ada setelah build): `gh release edit vX --notes-file <file>`. **Ini WAJIB** — halaman **changelog website** menarik **body GitHub Release** via API dan `parseBody()` hanya membaca **bullet** di bawah heading; tanpa langkah ini, changelog cuma menampilkan placeholder.
    - **Format release notes (agar terbaca website):**
+     - **BAHASA INGGRIS** — deskripsi rilis/pre-rilis (summary + semua bullet) **WAJIB bahasa Inggris**, bukan Indonesia (keputusan user 2026-08-06).
      - **Paragraf intro** (1 kalimat) di paling atas → jadi *summary*.
      - Detail **HARUS bullet** (`- …`) di bawah heading. Heading → label warna: **`### Added`** / New / Feature(s) = hijau · **`### Fixed`** / Fixes / Bugfixes = biru · **`### Changed`** / Improved / Improvements = kuning. Heading lain/tanpa heading = default *Changed*. `**bold**`/`` `code` ``/`[link](url)` otomatis di-strip.
      - **Isi lengkap**: cantumkan **semua** perubahan/perbaikan yang masuk di rilis itu (dari commit-commit sejak tag sebelumnya), bukan ringkasan singkat.
