@@ -30,6 +30,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publi
 | **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | ✅ **rilis `0.1.0`** (2026-08-03) · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql). Sisa: uji native menyeluruh (lihat **§19**) |
 | 21 | **Terminal Search** (Find in terminal, **Ctrl+F**) — cari teks di output SSH/CMD/PowerShell, highlight + next/prev, hotkey overridable | ✅ (implementasi; uji native pending — lihat **§16 Fase 21**) |
 | 22 | **SFTP: dropdown folder induk** di address bar — lompat ke folder induk/root tanpa klik Up berkali-kali | ✅ (implementasi; uji native pending — lihat **§16 Fase 22**) |
+| **23** | **Auto-Backup DB** — Settings → menu "Backup DB": list setup auto-backup (jalan saat komputer/app menyala), tiap setup pilih SSH·userDB·database(satu/semua)·folder tujuan; jalan berurutan dgn jeda menit; penanda "sudah jalan hari ini" di store; default **OFF** | ⬜ **rancangan** (diskusi user 2026-08-05 — lihat **§20**) |
 
 > Detail per fase ada di **§16 Progress Log**. Kolom "Status" di-update tiap fase (jangan dihapus).
 
@@ -57,6 +58,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publi
 - **Database Manager native** (Fase 20) — panel DB ala phpMyAdmin di dalam Moorix: MySQL/MariaDB + PostgreSQL lewat SSH tunnel yang sudah ada, dengan **profil DB** (anak dari profil SSH, kredensial di vault), browse tabel, SQL editor (reuse Monaco), edit/insert/delete, dan export/import `.sql`. **Rancangan lengkap + pentahapan di §19.** ✅ **Implementasi tuntas & dirilis di `v0.1.0`** (detail changelog di §16 "Rilis publik 0.1.0"). Sisa: uji native menyeluruh.
 
 ### 🟡 Opsional — nilai tambah
+- **Auto-Backup DB (Fase 23)** — ⬜ **RANCANGAN** (§20, diskusi user 2026-08-05): Settings → "Backup DB", list setup auto-backup yang jalan saat komputer/app menyala, tiap setup pilih SSH·userDB·database·folder tujuan, jalan berurutan dgn jeda menit, folder bertanggal `-ddMonthNameyyyy` (1 `.sql`/DB), penanda per-hari di store (+cleanup >7 hari), default **OFF**. Reuse `mysqldump`/`pg_dump` (§19.5).
 - ~~**Config sync**: bangun server sync minimal~~ ✅ **SELESAI via Google Drive** (Fase 17) — Push/Pull E2E-encrypted ke appDataFolder; tanpa server sendiri.
 - **SFTP**: lebar panel **persist antar-restart**, **preview file**, **checksum/verify** transfer, progres byte per-file (kini per-file by name/index), simbol link ikon khusus. ~~Dropdown folder induk di address bar~~ ✅ **SELESAI** (Fase 22 — implementasi; uji native pending).
 - **Editor multi-file (minimize + tab + split view ala VS Code)** — ✅ **SELESAI & teruji native** (Fase 19, T1–T3, user 2026-07-22): editor jadi surface multi-dokumen, tab bar + dot unsaved, minimize→pill, split view bebas bersarang (pemilih file), Monaco model per file (undo/scroll/kursor terjaga), read-only saat sesi SFTP tertutup + re-bind saat panel dibuka lagi.
@@ -1154,3 +1156,82 @@ Karena Moorix **sudah SSH** ke server, **jangan reimplementasi logika dump di Ru
 - **Add column — posisi (First/After) ✅ (2026-07-31)** — `db_add_column` +param `first`/`after`; MySQL/MariaDB `ADD COLUMN … FIRST|AFTER \`col\``. Dialog Add column: dropdown **Position** (At end / First / After &lt;kolom&gt;), hanya saat mode Add. **PostgreSQL** tak dukung posisi (kolom selalu di akhir) → selector disembunyikan + catatan.
 - **Enum — guided di dialog kolom + Create TYPE PG ✅ (2026-07-31)** — di `ColumnDialog` (Add/Edit) pilih type **enum** → muncul editor nilai (Add/remove value). MySQL/MariaDB: bikin inline `enum('a','b',…)` (escape `'`/`\`). PostgreSQL: input **nama type** + nilai → jalankan `db_create_enum` (`CREATE TYPE schema.name AS ENUM (...)`, PG-only, nilai via `pg_quote_literal`) lalu kolom pakai nama type itu. Juga ada entry **Create enum type…** di menu klik-kanan schema (dialog `CreateEnumDialog` mandiri + preview SQL). Preset `enum('a','b')`/`set('a','b')` tetap ada di `MYSQL_TYPES` untuk CreateTableDialog (switch ke Custom); di ColumnDialog preset template di-filter, diganti opsi **enum** terpandu.
 - **Fase 20 SELESAI (implementasi)** — Database Manager native multi-engine (MySQL/MariaDB + PostgreSQL): connect·SQL editor·browse·structure (+edit kolom·posisi·enum)·edit/insert/delete·create db/table/enum-type·drop/rename·export/import `.sql`. Sisa: uji native menyeluruh oleh user + polish opsional (SQL-editor-edit PG · indeks/FK editing).
+
+---
+
+## 20. Rancangan: Auto-Backup DB (Fase 23) — ⬜ RANCANGAN (diskusi user 2026-08-05)
+
+### 20.0 Tujuan
+Menu **Settings → "Backup DB"**: user setup auto-backup database yang **jalan otomatis saat komputer/aplikasi menyala**. Reuse mesin dump yang sudah ada (`mysqldump`/`pg_dump` server-side lewat SSH — lihat §19.5 & `db_export_sql` di `db.rs`). **Default fitur OFF.**
+
+### 20.1 Keputusan terkunci ✅ (hasil diskusi user 2026-08-05)
+
+1. **List setup (banyak profil), bukan satu.** Tiap setup = satu "backup job". Bisa tambah/hapus/reorder.
+2. **Field per setup:**
+   - **Backup name** (pembeda + jadi kunci penanda run). Contoh: `prod-harian`.
+   - **Folder save** (folder tujuan konfigurable). Contoh: `C:/backups`.
+   - **SSH profile** — pilih dari profil yang **databasenya sudah di-setup** (punya `databases[]`).
+   - **UserDB** — profil DB (anak SSH) yang dipakai kredensialnya.
+   - **Database** — pilih **satu, beberapa, atau semua**. Contoh: `dbsave,dbsave-1,dbsave-2`.
+   - **Folder format** (base name). Contoh: `dbbackup`.
+   - **Jeda (menit)** sebelum job dijalankan relatif ke job sebelumnya. Default **5**.
+   - **Retensi (hari)** — simpan N hari terakhir, sisanya folder lama auto-hapus. Default **2**; kosong/0 = jangan hapus (lihat §20.6).
+3. **Struktur output** — satu **folder bertanggal** per job, isinya **satu `.sql` per database**:
+   ```
+   C:/backups/dbbackup-05August2026/dbsave.sql
+   C:/backups/dbbackup-05August2026/dbsave-1.sql
+   C:/backups/dbbackup-05August2026/dbsave-2.sql
+   ```
+   - Suffix folder auto = `-ddMonthNameyyyy`, **nama bulan bahasa Inggris** (`August`, bukan `Agustus`) → `dbbackup-05August2026`.
+   - **Jika folder tanggal sudah ada** (backup ke-2 di hari sama): **timpa** file (`.sql` = snapshot terakhir hari itu). *(Alternatif tambah jam ke nama folder = ditolak; pilih timpa.)*
+4. **Eksekusi berurutan (sequential), bukan paralel.** Job dijalankan sesuai urutan list; **urutan bisa diubah** (reorder). Jeda antar-job = field jeda job (default 5 menit setelah job sebelumnya **selesai**).
+5. **Item pertama** saat app start: **jeda awal 1–2 menit** dulu (biar app & koneksi settle) + **popup kanan-bawah**: "Autobackup akan dimulai…". Baru mulai job pertama.
+6. **Trigger "saat komputer menyala"** = Model A: backup jalan **saat aplikasi Moorix start**, dan Moorix didaftarkan **autostart OS**. (Model B — OS Task Scheduler headless — ditolak untuk v1: butuh mode CLI + akses kredensial di luar app.)
+7. **Penanda "sudah jalan"** — per **backup name** simpan **tanggal terakhir jalan**. Saat start: jika sudah jalan **hari ini** → skip; jika belum → jalankan lalu update penanda. Efek: **maks 1× per hari per job** (selaras folder bertanggal). App dibuka-tutup berkali-kali dalam sehari → tetap sekali.
+8. **Penyimpanan** — pakai **Tauri plugin-store (`moorix.json`)**, bukan `localStorage`. Config list & penanda run dua-duanya di store (`store.ts`).
+9. **Auto-cleanup penanda** — penanda yang **lebih tua dari 7 hari** (tanggal terakhir jalan > 7 hari lalu) → **dihapus** saat start, biar store tak membludak (terutama penanda job yang sudah dihapus). Rename backup name → penanda lama jadi orphan, kehapus sendiri oleh aturan 7 hari + job jalan sekali lagi hari itu (**acceptable**).
+10. **Popup progress** kanan-bawah saat proses backup berjalan (reuse komponen `Toast`).
+11. **Retensi / rotasi backup (auto-hapus folder lama)** — lihat §20.6. Default **2 hari**, hapus **permanen** (bypass Recycle Bin), dijalankan **setelah** backup hari ini sukses.
+
+### 20.2 Kredensial / vault (§ lihat `secrets.ts`, `vault.ts`)
+Dua mode, keduanya **wajib didukung**:
+- **Mode A — OS keychain** (vault master-password TIDAK aktif): password DB & SSH ditarik otomatis dari Windows Credential Manager → **autobackup 100% silent**. **User `hajih` saat ini Mode A** (dicek 2026-08-05: `moorix.json` tak punya key `vault`).
+- **Mode B — Vault master-password**: saat start vault terkunci → **tak bisa baca kredensial tanpa unlock**. Jika ada job due & vault Mode B: tampilkan **popup + tombol unlock** (reuse `VaultUnlockModal`) di jendela jeda awal itu. Unlock → jalan normal. Diabaikan/cancel → **skip sesi ini, penanda TIDAK ditulis** → retry di startup berikutnya. **Master password TIDAK pernah disimpan.**
+- Vault **tidak punya auto-lock idle** (dicek: tak ada timer lock) → **unlock sekali di awal aman** untuk seluruh sequence 5-menit-antar-job.
+
+### 20.3 Backend (Rust)
+- **Command baru khusus backup** (mis. `db_backup_run`), **JANGAN utak-atik `db_export_sql`** — export manual di panel Database **tetap** ke folder Downloads OS (perilaku lama, zero regresi).
+- Command backup terima: `dest_dir`, `folder_base` (→ hitung suffix `-ddMonthNameyyyy`), daftar `database[]`, kredensial job. Loop DB → buat subfolder bertanggal → satu `.sql` per DB (timpa bila ada). Reuse jalur `mysqldump --single-transaction --quick` / `pg_dump --no-owner --no-privileges`, kredensial via `--defaults-extra-file` / `.pgpass` mode-600 (pola §19.5), stream stdout → file (`exec_to_file`).
+- **Orkestrasi headless**: buka SSH → `db_open` → dump per DB → tutup. Perlu flow "connect terprogram" yang belum ada (sekarang `db_export_sql` mengandalkan `db_session`/`ssh_handle` yang sudah aktif dari UI).
+- Nama bulan Inggris: format tanggal manual (hindari locale OS) — array 12 nama bulan Inggris.
+
+### 20.4 Frontend
+- **Section baru** `backupdb` di `SettingsPage.tsx` sidebar + tipe `SectionId`. Default fitur **OFF** (master toggle).
+- **Editor list job**: tambah/hapus/reorder (drag), tiap job form field §20.1.2. Dropdown SSH difilter ke profil yang punya `databases[]`; dropdown DB multi-select (+ opsi "Semua").
+- **Runner** dijalankan sekali saat app siap (mis. di `App.tsx`/`main.tsx`): baca list → filter job enabled & belum jalan hari ini → jeda awal 1–2 mnt + popup → loop sequential dgn jeda → update penanda → cleanup penanda >7 hari.
+- **Autostart OS**: butuh `tauri-plugin-autostart` (**belum ada** di `Cargo.toml`) + toggle "Jalankan Moorix saat startup".
+- **Notifikasi**: v1 pakai **toast in-app** (`Toast` sudah ada) — progress hanya kelihatan saat app kebuka. Notifikasi OS native (`tauri-plugin-notification`, **belum ada**) = opsional menyusul.
+
+### 20.5 Yang perlu ditambah (dependency)
+- `tauri-plugin-autostart` (untuk "saat komputer menyala" Model A).
+- (opsional) `tauri-plugin-notification` (popup OS native, bukan sekadar toast in-app).
+
+### 20.6 Retensi / rotasi backup — auto-hapus folder lama ✅ (keputusan user 2026-08-05)
+Sebelum disk penuh, job auto-hapus folder backup lama miliknya sendiri.
+
+- **Aturan:** simpan **N hari terakhir** (field per job, **default 2**). Contoh N=2, hari ini 9 Juli → hapus folder dgn tanggal **`< 7 Juli`** (`backupdb-05July2026`, `backupdb-06July2026` kehapus; `07`/`08`/`09` tetap → efektif simpan 3 folder). **Kosong/0 = jangan hapus apa-apa** (opt-out aman).
+- **Waktu jalan:** **SETELAH backup hari ini sukses**, bukan sebelum. Alasan: kalau hapus dulu lalu dump gagal, backup lama keburu hilang padahal pengganti gagal dibuat. Hapus setelah sukses → coverage tak pernah berkurang tanpa pengganti.
+- **Hapus permanen** (`std::fs::remove_dir_all`, **bypass Recycle Bin**) — memang tujuannya kontrol penyimpanan.
+- **Pengaman cakupan (WAJIB, karena irreversible):** hanya hapus folder yang **(a)** anak langsung dari `folder save` job itu, **(b)** namanya cocok pola **pasti** `"<folderBase>-<tanggal>"` job itu (base sama persis), **dan (c)** suffix tanggal **berhasil di-parse** jadi `Date` valid. Folder yang tak cocok pola → **di-skip, tidak dihapus** (mis. `foto-liburan`, `backupdb-catatan`). Tidak rekursif ke parent.
+- **Perbandingan sebagai tanggal asli, bukan string** — `05July2026` vs `06June2026` salah kalau di-sort string; parse ke `Date` (nama bulan Inggris) dulu, baru bandingkan `< (hari_ini − N hari)`.
+- Retensi ini **per job** (base name + `folder save`-nya sendiri), independen antar job.
+
+### 20.7 Pentahapan usulan
+| Sub-fase | Isi |
+|---|---|
+| **23A — Setting + persist** | Section "Backup DB" (master toggle OFF) · CRUD+reorder list job di store · form field lengkap · dropdown SSH/DB terfilter |
+| **23B — Backend backup** | Command `db_backup_run` (folder bertanggal · 1 `.sql`/DB · timpa) · orkestrasi headless connect · reuse dump MySQL+PG |
+| **23C — Runner + penanda** | Trigger saat app start · jeda awal + popup kanan-bawah · sequential + jeda antar-job · penanda per-hari di store · cleanup >7 hari · Mode B prompt-unlock/skip-retry · **retensi/auto-hapus folder lama setelah sukses (§20.6)** |
+| **23D — Autostart + polish** | `tauri-plugin-autostart` + toggle · (opsional) notifikasi OS native |
+
+**Status:** rancangan disetujui (diskusi 2026-08-05). Belum mulai implementasi.
