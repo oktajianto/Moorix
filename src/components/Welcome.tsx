@@ -79,10 +79,10 @@ export function Welcome({ onClose }: { onClose: () => void }) {
               try {
                 const code = await invoke<string>("start_google_login");
                 const token = await invoke<{ access_token: string }>("exchange_google_token", { code });
-                alert("Login sukses! Access token: " + token.access_token.substring(0, 10) + "...");
+                alert("Login successful! Access token: " + token.access_token.substring(0, 10) + "...");
                 // Note: The rest of the download & import logic would continue here
               } catch (err: any) {
-                alert("Gagal login: " + err);
+                alert("Login failed: " + err);
               }
             }}
             className="rounded-md border px-5 py-2.5 text-sm font-medium transition hover:bg-black/20"

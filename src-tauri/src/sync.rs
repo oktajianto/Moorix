@@ -21,6 +21,14 @@ struct SyncPayload {
     secrets: HashMap<String, String>,
 }
 
+/// Store keys that are per-device and must never sync: kept out of the exported
+/// payload, and skipped on import so a pull can't overwrite this machine's value.
+/// - `googleAccount`: this device's Google session.
+/// - `dbBackup` / `dbBackupRuns`: auto-backup jobs + run markers must stay local,
+///   so signing the same account into another computer doesn't make it back up
+///   too (Fase 23 — user 2026-08-06).
+const LOCAL_ONLY_KEYS: [&str; 3] = ["googleAccount", "dbBackup", "dbBackupRuns"];
+
 pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let store_path = app_data_dir.join("moorix.json");
@@ -31,11 +39,17 @@ pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
         "{}".to_string()
     };
 
-    // Google tokens are per-device: strip them from the synced payload so a
-    // pull on another machine never overwrites (or leaks) a session.
+    // Strip per-device keys (Google session, auto-backup config/markers) from the
+    // synced payload so a pull on another machine never overwrites (or leaks) them.
     if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&store_json) {
         if let Some(obj) = parsed.as_object_mut() {
-            if obj.remove("googleAccount").is_some() {
+            let mut changed = false;
+            for key in LOCAL_ONLY_KEYS {
+                if obj.remove(key).is_some() {
+                    changed = true;
+                }
+            }
+            if changed {
                 store_json = serde_json::to_string(&parsed).map_err(|e| e.to_string())?;
             }
         }
@@ -88,12 +102,13 @@ pub fn apply_sync_payload(app: &AppHandle, payload_json: &str) -> Result<(), Str
     // Apply the imported config THROUGH the store plugin, not a raw file write.
     // The plugin keeps moorix.json cached in memory; writing the file behind its
     // back lets that stale cache clobber the import on the next save/relaunch
-    // (which is exactly why pulled profiles vanished). googleAccount is stripped
-    // from the payload, so skipping it leaves this device's sign-in intact.
+    // (which is exactly why pulled profiles vanished). Per-device keys are already
+    // stripped from the payload, but skip them here too as belt-and-suspenders so
+    // an older payload can't overwrite this device's sign-in or backup setup.
     let store = app.store("moorix.json").map_err(|e| e.to_string())?;
     if let Some(obj) = incoming.as_object() {
         for (key, value) in obj {
-            if key == "googleAccount" {
+            if LOCAL_ONLY_KEYS.contains(&key.as_str()) {
                 continue;
             }
             store.set(key.clone(), value.clone());

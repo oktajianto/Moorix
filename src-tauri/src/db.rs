@@ -1757,6 +1757,228 @@ pub async fn db_export_sql(
     Ok(local_path.to_string_lossy().to_string())
 }
 
+/* -------------------------------------------------------------------------- */
+/* Auto-Backup DB (Fase 23B): full-database dump to a dated folder + retention. */
+/* -------------------------------------------------------------------------- */
+
+/// English month names for the dated backup folder (locale-independent, matches
+/// the frontend `datedFolderName`).
+const MONTHS_EN: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
+];
+
+/// `<base>-ddMonthNameyyyy`, e.g. `dbbackup-05August2026`.
+fn dated_folder_name(base: &str, d: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    format!("{base}-{:02}{}{}", d.day(), MONTHS_EN[(d.month() - 1) as usize], d.year())
+}
+
+/// Parse a folder name of the exact form `<base>-ddMonthNameyyyy` back into a
+/// date. Returns None if the name doesn't match this job's base + a valid date —
+/// the guardrail that keeps retention pruning from touching unrelated folders.
+fn parse_dated_folder(base: &str, name: &str) -> Option<chrono::NaiveDate> {
+    let rest = name.strip_prefix(&format!("{base}-"))?;
+    if rest.len() < 8 {
+        return None;
+    }
+    let day: u32 = rest.get(0..2)?.parse().ok()?;
+    let after_day = &rest[2..];
+    let month_idx = MONTHS_EN.iter().position(|m| after_day.starts_with(m))?;
+    let year: i32 = after_day[MONTHS_EN[month_idx].len()..].parse().ok()?;
+    chrono::NaiveDate::from_ymd_opt(year, (month_idx + 1) as u32, day)
+}
+
+/// Delete dated subfolders of `dest_dir` (matching `base`) whose date is strictly
+/// before `cutoff`. Permanent (`remove_dir_all`, no recycle bin). Only touches
+/// direct children whose name parses as `<base>-<valid date>`. Returns the names
+/// removed.
+async fn prune_old_folders(dest_dir: &str, base: &str, cutoff: chrono::NaiveDate) -> Vec<String> {
+    let mut removed = Vec::new();
+    let mut rd = match tokio::fs::read_dir(dest_dir).await {
+        Ok(r) => r,
+        Err(_) => return removed,
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        if !entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        match parse_dated_folder(base, &name) {
+            Some(date) if date < cutoff => {
+                if tokio::fs::remove_dir_all(entry.path()).await.is_ok() {
+                    removed.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    removed
+}
+
+/// Dump one whole database to `local_path` via server-side `mysqldump`/`pg_dump`.
+/// Credentials go through a mode-600 temp file (never argv), removed afterwards.
+/// `uid` makes the temp filename unique. Returns bytes written.
+async fn dump_full_database(
+    handle: &SshHandle,
+    sess: &DbSession,
+    database: &str,
+    local_path: &std::path::Path,
+    uid: String,
+) -> Result<u64, String> {
+    if sess.is_pg() {
+        let pgpass = format!("/tmp/.moorix-bk-{uid}.pgpass");
+        let body = format!(
+            "*:*:*:{}:{}\n",
+            pg_pgpass_escape(&sess.db_user),
+            pg_pgpass_escape(&sess.db_password)
+        );
+        write_secure_remote(handle, &pgpass, body.as_bytes()).await?;
+        let cmd = format!(
+            "PGPASSFILE={} pg_dump -h {} -p {} -U {} -d {} --no-owner --no-privileges",
+            shq(&pgpass),
+            shq(&sess.db_host),
+            sess.db_port,
+            shq(&sess.db_user),
+            shq(database)
+        );
+        let result = exec_to_file(handle, &cmd, local_path).await;
+        let _ = run_exec(handle, &format!("rm -f {}", shq(&pgpass)), None, |_| {}).await;
+        let (bytes, stderr, code) = result?;
+        if code != 0 {
+            let _ = tokio::fs::remove_file(local_path).await;
+            return Err(format!(
+                "pg_dump exited {code}: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            ));
+        }
+        return Ok(bytes);
+    }
+
+    let cnf = format!("/tmp/.moorix-bk-{uid}.cnf");
+    let cnf_body = format!(
+        "[client]\nuser={}\npassword={}\nhost={}\nport={}\n",
+        sess.db_user, sess.db_password, sess.db_host, sess.db_port
+    );
+    write_secure_remote(handle, &cnf, cnf_body.as_bytes()).await?;
+    let cmd = format!(
+        "mysqldump --defaults-extra-file={} --single-transaction --quick {}",
+        shq(&cnf),
+        shq(database)
+    );
+    let result = exec_to_file(handle, &cmd, local_path).await;
+    let _ = run_exec(handle, &format!("rm -f {}", shq(&cnf)), None, |_| {}).await;
+    let (bytes, stderr, code) = result?;
+    if code != 0 {
+        let _ = tokio::fs::remove_file(local_path).await;
+        return Err(format!(
+            "mysqldump exited {code}: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    Ok(bytes)
+}
+
+#[derive(serde::Serialize)]
+pub struct BackupFileResult {
+    pub database: String,
+    pub path: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct BackupRunResult {
+    /// Absolute path of the dated folder written to.
+    pub folder: String,
+    pub files: Vec<BackupFileResult>,
+    /// Names of old dated folders pruned by retention (empty if disabled/none).
+    pub pruned: Vec<String>,
+}
+
+/// Run one backup job: dump every database in `databases` (full) into
+/// `<dest_dir>/<folder_base>-ddMonthNameyyyy/<db>.sql` (overwriting), then — only
+/// if every dump succeeded and `retention_days > 0` — prune dated folders older
+/// than `today - retention_days`. Same mechanism used by the auto-runner and the
+/// manual "Run backup" button.
+#[tauri::command]
+pub async fn db_backup_run(
+    state: State<'_, AppState>,
+    db_session_id: String,
+    databases: Vec<String>,
+    dest_dir: String,
+    folder_base: String,
+    retention_days: u32,
+) -> Result<BackupRunResult, String> {
+    if dest_dir.trim().is_empty() {
+        return Err("Destination folder is empty".to_string());
+    }
+    if folder_base.trim().is_empty() {
+        return Err("Folder name is empty".to_string());
+    }
+    if databases.is_empty() {
+        return Err("No databases selected".to_string());
+    }
+
+    let sess = state
+        .db_session(&db_session_id)
+        .ok_or_else(|| "db session not found".to_string())?;
+    let handle = state
+        .ssh_handle(&sess.parent_ssh)
+        .ok_or_else(|| "SSH session for this database is closed".to_string())?;
+
+    let today = chrono::Local::now().date_naive();
+    let folder = dated_folder_name(&folder_base, today);
+    let dir = std::path::Path::new(&dest_dir).join(&folder);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("failed to create backup folder: {e}"))?;
+
+    let mut files = Vec::new();
+    let mut all_ok = true;
+    for db in &databases {
+        // Filesystem-safe filename (keep it aligned with the export naming rules).
+        let safe: String = db
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let path = dir.join(format!("{safe}.sql"));
+        match dump_full_database(&handle, &sess, db, &path, state.next_id()).await {
+            Ok(bytes) => files.push(BackupFileResult {
+                database: db.clone(),
+                path: path.to_string_lossy().to_string(),
+                ok: true,
+                error: None,
+                bytes,
+            }),
+            Err(e) => {
+                all_ok = false;
+                files.push(BackupFileResult {
+                    database: db.clone(),
+                    path: path.to_string_lossy().to_string(),
+                    ok: false,
+                    error: Some(e),
+                    bytes: 0,
+                });
+            }
+        }
+    }
+
+    let mut pruned = Vec::new();
+    if all_ok && retention_days > 0 {
+        if let Some(cutoff) = today.checked_sub_days(chrono::Days::new(retention_days as u64)) {
+            pruned = prune_old_folders(&dest_dir, &folder_base, cutoff).await;
+        }
+    }
+
+    Ok(BackupRunResult {
+        folder: dir.to_string_lossy().to_string(),
+        files,
+        pruned,
+    })
+}
+
 /// Import a `.sql` script into `database` via server-side `mysql` (MySQL) or
 /// `psql` (Postgres), streaming the script to its stdin. Credentials go through a
 /// mode-600 file (never argv). Returns Ok(()) on success; the tool's error otherwise.

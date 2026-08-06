@@ -42,6 +42,7 @@ import { unlock as vaultUnlock } from "./vault";
 import { useSettings, DEFAULT_SETTINGS } from "./settings";
 import { useToast } from "./components/Toast";
 import { checkForUpdates } from "./updater";
+import { runAutoBackups, syncTrayMode } from "./backupDb";
 import { getTheme, isLightTheme } from "./themes";
 import {
   AVAILABLE_BUILTINS,
@@ -292,6 +293,14 @@ function App() {
           setActiveId(id);
           setActivePaneId(leaf.paneId);
         }
+
+        // Auto-Backup DB (Fase 23C): start the runner once, fire-and-forget. It
+        // prunes stale markers, then (if enabled) waits an initial delay and runs
+        // due jobs sequentially with progress toasts.
+        void runAutoBackups(profiles, toast);
+        // Tray mode (Fase 23D-2): close/minimize → hide-to-tray when auto-backup
+        // or autostart is on.
+        void syncTrayMode();
       })
       .catch(() => {})
       .finally(() => {

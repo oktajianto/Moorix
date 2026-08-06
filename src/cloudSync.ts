@@ -216,7 +216,7 @@ export async function autoPush(): Promise<void> {
  *  Records the resulting remote time. Throws on failure so the caller can report. */
 export async function seedPush(pw: string): Promise<void> {
   const token = await getAccessToken();
-  if (!token) throw new Error("Belum login Google.");
+  if (!token) throw new Error("Not signed in to Google.");
   const payload = await invoke<number[]>("export_sync_data", { password: pw });
   await invoke<string>("drive_upload_appdata", {
     accessToken: token,

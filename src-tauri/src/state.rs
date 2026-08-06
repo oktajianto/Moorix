@@ -78,9 +78,21 @@ pub struct AppState {
     /// Live database sessions (Fase 20), keyed by their own id. Each rides an
     /// SSH session's tunnel; closing that SSH session drops these too.
     db_sessions: Mutex<HashMap<String, Arc<DbSession>>>,
+    /// When true, closing/minimizing the window hides it to the tray instead of
+    /// quitting (Fase 23D-2). The frontend sets this from `set_tray_mode` based on
+    /// whether auto-backup or autostart is enabled.
+    tray_mode: AtomicBool,
 }
 
 impl AppState {
+    /// Whether close/minimize should hide to the tray instead of quitting.
+    pub fn set_tray_mode(&self, on: bool) {
+        self.tray_mode.store(on, Ordering::Relaxed);
+    }
+    pub fn tray_mode(&self) -> bool {
+        self.tray_mode.load(Ordering::Relaxed)
+    }
+
     pub fn next_id(&self) -> String {
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
         format!("s{n}")

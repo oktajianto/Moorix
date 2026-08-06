@@ -24,19 +24,73 @@ fn open_devtools(window: tauri::WebviewWindow) {
     window.open_devtools();
 }
 
+/// Enable/disable tray mode: when on, closing/minimizing the window hides it to
+/// the tray instead of quitting (Fase 23D-2). The frontend sets this from whether
+/// auto-backup or autostart is enabled.
+#[tauri::command]
+fn set_tray_mode(state: tauri::State<AppState>, enabled: bool) {
+    state.set_tray_mode(enabled);
+}
+
+/// Title-bar minimize button: hide to tray when tray mode is on, otherwise a
+/// normal minimize (Fase 23D-2).
+#[tauri::command]
+fn window_minimize(state: tauri::State<AppState>, window: tauri::WebviewWindow) {
+    if state.tray_mode() {
+        let _ = window.hide();
+    } else {
+        let _ = window.minimize();
+    }
+}
+
+/// Reflect backup activity on the system tray icon's tooltip (Fase 23D): while a
+/// backup runs, hovering the tray icon near the clock shows what's happening.
+#[tauri::command]
+fn set_backup_activity(app: tauri::AppHandle, active: bool, label: String) {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        if let Some(tray) = app.tray_by_id("main") {
+            let tip = if active {
+                if label.is_empty() {
+                    "Moorix — Backup running…".to_string()
+                } else {
+                    format!("Moorix — Backup running: {label}")
+                }
+            } else {
+                "Moorix".to_string()
+            };
+            let _ = tray.set_tooltip(Some(tip));
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, active, label);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::new().build());
 
-    // Auto-update + relaunch are desktop-only; mobile updates ship via app stores.
+    // Auto-update + relaunch + autostart are desktop-only; mobile updates ship via
+    // app stores and has no login-item concept.
     #[cfg(desktop)]
     {
         builder = builder
             .plugin(tauri_plugin_updater::Builder::new().build())
-            .plugin(tauri_plugin_process::init());
+            .plugin(tauri_plugin_process::init())
+            .plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                // Passed to the launched instance so it can start hidden-to-tray
+                // (Fase 23D-2). Harmless when launched manually.
+                Some(vec!["--autostart"]),
+            ));
     }
 
     builder
@@ -110,6 +164,7 @@ pub fn run() {
             db::db_delete_row,
             db::db_insert_row,
             db::db_export_sql,
+            db::db_backup_run,
             db::db_import_sql,
             db::db_drop_table,
             db::db_rename_table,
@@ -122,7 +177,91 @@ pub fn run() {
             db::db_drop_column,
             db::db_apply_enum,
             open_devtools,
+            set_backup_activity,
+            set_tray_mode,
+            window_minimize,
         ])
+        .on_window_event(|window, event| {
+            // Tray mode (Fase 23D-2): closing the window hides it to the tray
+            // instead of quitting, so background auto-backup keeps working.
+            #[cfg(desktop)]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Manager;
+                if window.state::<AppState>().tray_mode() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            let _ = (window, event);
+        })
+        .setup(|app| {
+            #[cfg(desktop)]
+            {
+                build_tray(app)?;
+                // Launched at login via autostart (`--autostart`)? Stay hidden in
+                // the tray; otherwise show the window (it starts hidden, see conf).
+                use tauri::Manager;
+                let autostarted = std::env::args().any(|a| a == "--autostart");
+                if let Some(w) = app.get_webview_window("main") {
+                    if !autostarted {
+                        let _ = w.show();
+                    }
+                }
+            }
+            let _ = app;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Build the system-tray icon (id `main`) with a Show/Quit menu. Its tooltip is
+/// updated live via `set_backup_activity` to show backup progress near the clock.
+#[cfg(desktop)]
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItem::with_id(app, "show", "Open Moorix", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .expect("app has a default window icon");
+
+    TrayIconBuilder::with_id("main")
+        .icon(icon)
+        .tooltip("Moorix")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// Show, unminimize, and focus the main window (from tray click / menu).
+#[cfg(desktop)]
+fn show_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
 }

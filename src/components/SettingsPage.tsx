@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LayoutGrid,
   Paintbrush,
@@ -26,8 +26,21 @@ import {
   X,
   RotateCcw,
   UserCircle,
+  DatabaseBackup,
+  ChevronUp,
+  Check,
+  GripVertical,
+  FolderOpen,
+  LoaderCircle,
+  Play,
   type LucideIcon,
 } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
 import {
   HOTKEY_ACTIONS,
   bindingsFor,
@@ -61,6 +74,19 @@ import {
 } from "../profiles";
 import { NewProfilePicker } from "./NewProfilePicker";
 import {
+  type BackupConfig,
+  type BackupJob,
+  loadBackupConfig,
+  saveBackupConfig,
+  createBackupJob,
+  datedFolderName,
+  fetchDatabaseList,
+  userDatabases,
+  runBackupJob,
+  markJobRanToday,
+  syncTrayMode,
+} from "../backupDb";
+import {
   vaultConfigured,
   isUnlocked,
   createVault,
@@ -89,12 +115,14 @@ type Props = {
 
 export type SectionId =
   | "application" | "appearance" | "profiles" | "terminal" | "colorscheme"
-  | "configsync" | "hotkeys" | "shell" | "vault" | "window" | "configfile" | "account";
+  | "configsync" | "hotkeys" | "shell" | "vault" | "window" | "configfile"
+  | "account" | "backupdb";
 
 const SIDEBAR: { id: SectionId; name: string; Icon: LucideIcon; gapAfter?: boolean }[] = [
   { id: "application", name: "Application", Icon: LayoutGrid },
   { id: "appearance", name: "Appearance", Icon: Paintbrush },
   { id: "profiles", name: "Profiles & connections", Icon: Plug },
+  { id: "backupdb", name: "Backup DB", Icon: DatabaseBackup },
   { id: "terminal", name: "Terminal", Icon: SquareTerminal, gapAfter: true },
   { id: "colorscheme", name: "Color scheme", Icon: Palette },
   { id: "configsync", name: "Config sync", Icon: Cloud },
@@ -165,6 +193,8 @@ export function SettingsPage(props: Props) {
           <ShellSection />
         ) : section === "account" ? (
           <AccountSection />
+        ) : section === "backupdb" ? (
+          <BackupDbSection userProfiles={props.userProfiles} />
         ) : (
           <Placeholder title={SIDEBAR.find((s) => s.id === section)?.name ?? ""} />
         )}
@@ -468,12 +498,27 @@ function ApplicationSection() {
   const toast = useToast();
   const [version, setVersion] = useState("");
   const [checking, setChecking] = useState(false);
+  const [autostart, setAutostart] = useState<boolean | null>(null);
 
   useEffect(() => {
     getVersion()
       .then(setVersion)
       .catch(() => {});
+    isAutostartEnabled()
+      .then(setAutostart)
+      .catch(() => setAutostart(false));
   }, []);
+
+  const toggleAutostart = async (v: boolean) => {
+    try {
+      if (v) await enableAutostart();
+      else await disableAutostart();
+      setAutostart(v);
+      void syncTrayMode();
+    } catch (e) {
+      toast.show({ variant: "error", title: `Failed to change autostart: ${e}`, duration: 3000 });
+    }
+  };
 
   const onCheck = async () => {
     if (checking) return;
@@ -528,6 +573,12 @@ function ApplicationSection() {
           subtitle="Silently download and install updates from GitHub when available."
           checked={settings.autoUpdate}
           onChange={(v) => update({ autoUpdate: v })}
+        />
+        <ToggleRow
+          title="Run at startup"
+          subtitle="Launch Moorix automatically at Windows login — so auto-backup can run on its own."
+          checked={autostart ?? false}
+          onChange={(v) => void toggleAutostart(v)}
         />
         <div className="flex items-center justify-between gap-6 py-4">
           <div className="min-w-0">
@@ -1275,7 +1326,7 @@ function ConfigSyncSection() {
 
   const doPush = async () => {
     if (syncBusy) return;
-    const pass = window.prompt("Masukkan/Buat Master Password untuk enkripsi:");
+    const pass = window.prompt("Enter/Create a Master Password for encryption:");
     if (!pass) return;
     setSyncBusy("push");
     setSyncMsg(null);
@@ -1287,9 +1338,9 @@ function ConfigSyncSection() {
         name: SYNC_DRIVE_FILE,
         data: payload,
       });
-      setSyncMsg({ ok: true, text: `Backup terenkripsi (${payload.length.toLocaleString()} bytes) tersimpan di Google Drive.` });
+      setSyncMsg({ ok: true, text: `Encrypted backup (${payload.length.toLocaleString()} bytes) saved to Google Drive.` });
     } catch (err) {
-      setSyncMsg({ ok: false, text: `Gagal push: ${err}` });
+      setSyncMsg({ ok: false, text: `Push failed: ${err}` });
     } finally {
       setSyncBusy(null);
     }
@@ -1297,9 +1348,9 @@ function ConfigSyncSection() {
 
   const doPull = async () => {
     if (syncBusy) return;
-    const pass = window.prompt("Masukkan Master Password untuk dekripsi:");
+    const pass = window.prompt("Enter your Master Password to decrypt:");
     if (!pass) return;
-    if (!window.confirm("Konfigurasi & rahasia Vault di perangkat ini akan DITIMPA dengan backup dari Google Drive. Lanjutkan?")) return;
+    if (!window.confirm("The configuration & Vault secrets on this device will be OVERWRITTEN with the backup from Google Drive. Continue?")) return;
     setSyncBusy("pull");
     setSyncMsg(null);
     try {
@@ -1309,20 +1360,20 @@ function ConfigSyncSection() {
         name: SYNC_DRIVE_FILE,
       });
       await invoke("import_sync_data", { password: pass, data });
-      window.alert("Berhasil dipulihkan dari Google Drive. Aplikasi akan dimuat ulang.");
+      window.alert("Restored from Google Drive successfully. The app will reload.");
       await relaunch();
     } catch (err) {
-      setSyncMsg({ ok: false, text: `Gagal pull: ${err}` });
+      setSyncMsg({ ok: false, text: `Pull failed: ${err}` });
       setSyncBusy(null);
     }
   };
 
   const enableAutoSync = async () => {
-    const pass = window.prompt("Buat Master Password sinkronisasi (untuk enkripsi backup):");
+    const pass = window.prompt("Create a sync Master Password (to encrypt the backup):");
     if (!pass) return;
-    const confirm = window.prompt("Ulangi Master Password:");
+    const confirm = window.prompt("Repeat the Master Password:");
     if (confirm !== pass) {
-      setSyncMsg({ ok: false, text: "Password tidak cocok." });
+      setSyncMsg({ ok: false, text: "Passwords don't match." });
       return;
     }
     setSyncBusy("push");
@@ -1335,9 +1386,9 @@ function ConfigSyncSection() {
       await setValue("settings", { ...settings, autoSync: true });
       // Seed the backup now so other devices have something to pull.
       await seedPush(pass);
-      setSyncMsg({ ok: true, text: "Auto-sync aktif. Setup terunggah ke Google Drive — login akun sama di perangkat lain untuk menariknya otomatis." });
+      setSyncMsg({ ok: true, text: "Auto-sync enabled. Setup uploaded to Google Drive — sign in with the same account on another device to pull it automatically." });
     } catch (err) {
-      setSyncMsg({ ok: false, text: `Auto-sync aktif, tapi unggah awal gagal: ${err}. Pastikan sudah login Google.` });
+      setSyncMsg({ ok: false, text: `Auto-sync enabled, but the initial upload failed: ${err}. Make sure you're signed in to Google.` });
     } finally {
       setSyncBusy(null);
     }
@@ -1345,7 +1396,7 @@ function ConfigSyncSection() {
 
   const disableAutoSync = () => {
     update({ autoSync: false });
-    setSyncMsg({ ok: true, text: "Auto-sync dimatikan. Sinkronisasi manual (Push/Pull) tetap bisa dipakai." });
+    setSyncMsg({ ok: true, text: "Auto-sync disabled. Manual sync (Push/Pull) is still available." });
   };
 
   return (
@@ -1370,7 +1421,7 @@ function ConfigSyncSection() {
       {tab === "sync" ? (
         <div className="flex flex-col gap-4">
           <p className="text-sm" style={{ color: "var(--m-muted)" }}>
-            Sinkronkan konfigurasi (Store JSON) dan rahasia Vault (Keychain) Anda dengan aman melalui Google Drive (terenkripsi End-to-End).
+            Securely sync your configuration (Store JSON) and Vault secrets (Keychain) via Google Drive (End-to-End encrypted).
           </p>
 
           <div
@@ -1382,9 +1433,9 @@ function ConfigSyncSection() {
                 Auto-sync
               </div>
               <p className="mt-1 text-xs" style={{ color: "var(--m-muted)" }}>
-                Otomatis <b>tarik</b> setup saat login/buka aplikasi di perangkat lain, dan
-                otomatis <b>unggah</b> setiap ada perubahan. Butuh login Google + Master Password
-                (disimpan aman di keychain perangkat ini).
+                Automatically <b>pull</b> the setup when you sign in / open the app on another device, and
+                automatically <b>upload</b> on every change. Requires Google sign-in + a Master Password
+                (stored securely in this device's keychain).
               </p>
             </div>
             <button
@@ -1396,7 +1447,7 @@ function ConfigSyncSection() {
                 color: settings.autoSync ? "#fff" : "var(--m-text)",
               }}
             >
-              {settings.autoSync ? "Aktif — matikan" : "Aktifkan"}
+              {settings.autoSync ? "Enabled — turn off" : "Enable"}
             </button>
           </div>
 
@@ -1406,7 +1457,7 @@ function ConfigSyncSection() {
               disabled={syncBusy !== null}
               className="rounded bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {syncBusy === "push" ? "Mengunggah…" : "Push ke Google Drive"}
+              {syncBusy === "push" ? "Uploading…" : "Push to Google Drive"}
             </button>
             <button
               onClick={doPull}
@@ -1414,7 +1465,7 @@ function ConfigSyncSection() {
               className="rounded border px-4 py-2 text-sm font-medium transition hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-60"
               style={{ borderColor: "var(--m-border)", color: "var(--m-text)" }}
             >
-              {syncBusy === "pull" ? "Mengunduh…" : "Pull dari Google Drive"}
+              {syncBusy === "pull" ? "Downloading…" : "Pull from Google Drive"}
             </button>
           </div>
           {syncMsg && (
@@ -1767,7 +1818,622 @@ function Placeholder({ title }: { title: string }) {
   return (
     <div className="max-w-2xl">
       <h1 className="mb-3 text-2xl font-semibold" style={{ color: "var(--m-text)" }}>{title}</h1>
-      <p className="text-sm" style={{ color: "var(--m-muted)" }}>Bagian ini sedang dirancang.</p>
+      <p className="text-sm" style={{ color: "var(--m-muted)" }}>This section is being designed.</p>
+    </div>
+  );
+}
+
+/* --------------------------- Backup DB (Fase 23) -------------------------- */
+
+const inputStyle: React.CSSProperties = {
+  background: "var(--m-input)",
+  borderColor: "var(--m-input-border)",
+  color: "var(--m-text)",
+};
+
+function BackupDbSection({ userProfiles }: { userProfiles: UserProfile[] }) {
+  const toast = useToast();
+  const [cfg, setCfg] = useState<BackupConfig | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    void loadBackupConfig().then(setCfg);
+  }, []);
+
+  // Persist on every mutation (store.set + save; cheap, and keeps disk in sync).
+  const persist = (next: BackupConfig) => {
+    setCfg(next);
+    void saveBackupConfig(next).catch((e) =>
+      toast.show({ variant: "error", title: `Failed to save backup settings: ${e}`, duration: 3000 }),
+    );
+  };
+
+  // SSH profiles that actually have DB connections configured under them.
+  const sshWithDbs = userProfiles.filter(
+    (p) => p.type === "ssh" && (p.databases?.length ?? 0) > 0,
+  );
+
+  if (!cfg) {
+    return (
+      <div className="max-w-3xl">
+        <h1 className="mb-6 text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Backup DB</h1>
+        <p className="text-sm" style={{ color: "var(--m-muted)" }}>Loading…</p>
+      </div>
+    );
+  }
+
+  const setJob = (id: string, patch: Partial<BackupJob>) =>
+    persist({ ...cfg, jobs: cfg.jobs.map((j) => (j.id === id ? { ...j, ...patch } : j)) });
+
+  const addJob = () => persist({ ...cfg, jobs: [...cfg.jobs, createBackupJob()] });
+
+  const deleteJob = (id: string) =>
+    persist({ ...cfg, jobs: cfg.jobs.filter((j) => j.id !== id) });
+
+  const moveJob = (index: number, dir: -1 | 1) => reorder(index, index + dir);
+
+  // Move job from → to (used by both arrows and drag-and-drop).
+  const reorder = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= cfg.jobs.length || to >= cfg.jobs.length) return;
+    const jobs = [...cfg.jobs];
+    const [moved] = jobs.splice(from, 1);
+    jobs.splice(to, 0, moved);
+    persist({ ...cfg, jobs });
+  };
+
+  return (
+    <div className="max-w-3xl">
+      <h1 className="mb-1 text-2xl font-semibold" style={{ color: "var(--m-text)" }}>Backup DB</h1>
+      <p className="mb-4 text-sm" style={{ color: "var(--m-muted)" }}>
+        Automatically back up databases when the app/computer starts. Jobs run sequentially with a
+        delay between them. This feature is off by default.
+      </p>
+
+      <div className="rounded-lg border px-4" style={{ borderColor: "var(--m-border)" }}>
+        <ToggleRow
+          title="Enable auto-backup"
+          subtitle="Master switch. When off, no jobs run at startup."
+          checked={cfg.enabled}
+          onChange={(v) => {
+            persist({ ...cfg, enabled: v });
+            void syncTrayMode();
+          }}
+        />
+      </div>
+
+      {sshWithDbs.length === 0 && (
+        <div
+          className="mt-4 rounded-lg border px-4 py-3 text-sm"
+          style={{ borderColor: "var(--m-border)", color: "var(--m-muted)" }}
+        >
+          No SSH profile has a database connection yet. Add a DB connection under
+          <span style={{ color: "var(--m-text)" }}> Profiles &amp; connections → Databases</span> first,
+          then create a backup job here.
+        </div>
+      )}
+
+      <div className="mt-6 mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold" style={{ color: "var(--m-text)" }}>
+          Backup jobs ({cfg.jobs.length})
+        </h2>
+        <button
+          onClick={addJob}
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white"
+          style={{ background: "#2563eb" }}
+        >
+          <Plus className="h-4 w-4" /> Add job
+        </button>
+      </div>
+
+      {cfg.jobs.length === 0 ? (
+        <p className="text-sm" style={{ color: "var(--m-muted)" }}>
+          No jobs yet. Click “Add job” to create your first backup setup.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {cfg.jobs.map((job, i) => (
+            <BackupJobCard
+              key={job.id}
+              job={job}
+              index={i}
+              total={cfg.jobs.length}
+              sshProfiles={sshWithDbs}
+              dragging={dragIndex === i}
+              dropTarget={dragIndex !== null && dragIndex !== i}
+              onChange={(patch) => setJob(job.id, patch)}
+              onDelete={() => deleteJob(job.id)}
+              onMove={(dir) => moveJob(i, dir)}
+              onDragStart={() => setDragIndex(i)}
+              onDragEnd={() => setDragIndex(null)}
+              onDropOn={() => {
+                if (dragIndex !== null) reorder(dragIndex, i);
+                setDragIndex(null);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BackupJobCard({
+  job,
+  index,
+  total,
+  sshProfiles,
+  dragging,
+  dropTarget,
+  onChange,
+  onDelete,
+  onMove,
+  onDragStart,
+  onDragEnd,
+  onDropOn,
+}: {
+  job: BackupJob;
+  index: number;
+  total: number;
+  sshProfiles: UserProfile[];
+  dragging: boolean;
+  dropTarget: boolean;
+  onChange: (patch: Partial<BackupJob>) => void;
+  onDelete: () => void;
+  onMove: (dir: -1 | 1) => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDropOn: () => void;
+}) {
+  const ssh = sshProfiles.find((p) => p.id === job.sshProfileId);
+  const dbProfiles = ssh?.databases ?? [];
+  const dbProfile = dbProfiles.find((d) => d.id === job.dbProfileId);
+  const [dragOver, setDragOver] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [running, setRunning] = useState(false);
+  const toast = useToast();
+
+  const runNow = async () => {
+    if (running) return;
+    const jobLabel = job.name.trim() || "(unnamed)";
+    if (!ssh) return toast.show({ variant: "error", title: "Select an SSH profile first", duration: 3000 });
+    if (!dbProfile) return toast.show({ variant: "error", title: "Select a User DB first", duration: 3000 });
+    if (!job.destDir.trim()) return toast.show({ variant: "error", title: "Destination folder is empty", duration: 3000 });
+    if (!job.allDatabases && job.databases.length === 0)
+      return toast.show({ variant: "error", title: "Select at least one database", duration: 3000 });
+
+    setRunning(true);
+    const id = toast.show({
+      variant: "info",
+      title: `Backup "${jobLabel}" running…`,
+      message: "Connecting & exporting databases",
+      progress: null,
+    });
+    try {
+      const res = await runBackupJob(job, ssh);
+      const failed = res.files.filter((f) => !f.ok);
+      if (failed.length > 0) {
+        toast.update(id, {
+          variant: "error",
+          title: `Backup "${jobLabel}" finished — ${failed.length} failed`,
+          message: failed.map((f) => `${f.database}: ${f.error}`).join(" · "),
+          progress: undefined,
+          duration: 8000,
+        });
+      } else {
+        // A successful manual run counts as "ran today" (§20.1 point 12).
+        await markJobRanToday(job.name);
+        const prunedNote = res.pruned.length ? ` · ${res.pruned.length} old folders removed` : "";
+        toast.update(id, {
+          variant: "success",
+          title: `Backup "${jobLabel}" succeeded — ${res.files.length} databases`,
+          message: `${res.folder}${prunedNote}`,
+          progress: undefined,
+          duration: 6000,
+        });
+      }
+    } catch (e) {
+      toast.update(id, {
+        variant: "error",
+        title: `Backup "${jobLabel}" failed`,
+        message: String(e),
+        progress: undefined,
+        duration: 8000,
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const pickFolder = async () => {
+    const dir = await openDialog({
+      directory: true,
+      title: "Choose backup destination folder",
+      defaultPath: job.destDir || undefined,
+    });
+    if (typeof dir === "string") onChange({ destDir: dir });
+  };
+
+  return (
+    <div
+      onDragOver={(e) => {
+        if (!dropTarget) return;
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        onDropOn();
+      }}
+      className="rounded-lg border transition-shadow"
+      style={{
+        borderColor: dragOver ? "#2563eb" : "var(--m-border)",
+        background: "var(--m-chrome)",
+        opacity: dragging ? 0.4 : job.enabled ? 1 : 0.7,
+        boxShadow: dragOver ? "0 0 0 1px #2563eb inset" : undefined,
+      }}
+    >
+      {/* Header: drag handle + order controls + name + enable + delete */}
+      <div
+        className="flex items-center gap-2 border-b px-3 py-2.5"
+        style={{ borderColor: "var(--m-border)" }}
+      >
+        <div
+          draggable
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          className="cursor-grab active:cursor-grabbing"
+          title="Drag to reorder"
+        >
+          <GripVertical className="h-4 w-4" style={{ color: "var(--m-muted)" }} />
+        </div>
+        <span className="text-xs tabular-nums" style={{ color: "var(--m-muted)" }}>#{index + 1}</span>
+        <div className="flex flex-col">
+          <button
+            onClick={() => onMove(-1)}
+            disabled={index === 0}
+            className="disabled:opacity-30"
+            title="Move up"
+          >
+            <ChevronUp className="h-3.5 w-3.5" style={{ color: "var(--m-muted)" }} />
+          </button>
+          <button
+            onClick={() => onMove(1)}
+            disabled={index === total - 1}
+            className="disabled:opacity-30"
+            title="Move down"
+          >
+            <ChevronDown className="h-3.5 w-3.5" style={{ color: "var(--m-muted)" }} />
+          </button>
+        </div>
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          title={collapsed ? "Show details" : "Hide details"}
+          className="p-1"
+        >
+          {collapsed ? (
+            <ChevronRight className="h-4 w-4" style={{ color: "var(--m-muted)" }} />
+          ) : (
+            <ChevronDown className="h-4 w-4" style={{ color: "var(--m-muted)" }} />
+          )}
+        </button>
+        <input
+          value={job.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="Backup name (e.g. prod-daily)"
+          className="flex-1 rounded-md border px-3 py-1.5 text-sm outline-none focus:border-cyan-500"
+          style={inputStyle}
+        />
+        <button
+          onClick={runNow}
+          disabled={running}
+          title="Run backup now"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-white disabled:opacity-60"
+          style={{ background: "#059669" }}
+        >
+          {running ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+          <span>Run</span>
+        </button>
+        <Switch checked={job.enabled} onChange={(v) => onChange({ enabled: v })} />
+        <button onClick={onDelete} title="Delete job" className="p-1">
+          <Trash2 className="h-4 w-4" style={{ color: "#ef4444" }} />
+        </button>
+      </div>
+
+      {/* Body: fields (hidden when collapsed — keeps cards short for easy reorder) */}
+      {!collapsed && (
+      <div className="grid grid-cols-1 gap-x-6 gap-y-1 px-4 py-2 sm:grid-cols-2">
+        {/* SSH profile */}
+        <FieldRow label="SSH profile">
+          <select
+            value={job.sshProfileId}
+            onChange={(e) => onChange({ sshProfileId: e.target.value, dbProfileId: "" })}
+            className="w-52 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+            style={inputStyle}
+          >
+            <option value="">— select —</option>
+            {sshProfiles.map((p) => (
+              <option key={p.id} value={p.id}>{p.name || "(unnamed)"}</option>
+            ))}
+          </select>
+        </FieldRow>
+
+        {/* UserDB (DB profile) */}
+        <FieldRow label="User DB">
+          <select
+            value={job.dbProfileId}
+            onChange={(e) => onChange({ dbProfileId: e.target.value })}
+            disabled={!ssh}
+            className="w-52 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500 disabled:opacity-50"
+            style={inputStyle}
+          >
+            <option value="">— select —</option>
+            {dbProfiles.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name || d.dbUser} ({d.dbUser})
+              </option>
+            ))}
+          </select>
+        </FieldRow>
+
+        {/* All databases toggle */}
+        <FieldRow label="All databases" sublabel="Back up every database on the server">
+          <Switch
+            checked={job.allDatabases}
+            onChange={(v) => onChange({ allDatabases: v })}
+          />
+        </FieldRow>
+
+        {/* Explicit database checklist (auto-loaded from the server) */}
+        <FieldRow label="Databases" sublabel="Pick one or more">
+          <MultiDbSelect
+            ssh={ssh}
+            dbProfile={dbProfile}
+            selected={job.databases}
+            disabled={job.allDatabases}
+            onChange={(databases) => onChange({ databases })}
+          />
+        </FieldRow>
+
+        {/* Destination folder */}
+        <FieldRow label="Destination folder">
+          <div className="flex w-52">
+            <input
+              value={job.destDir}
+              onChange={(e) => onChange({ destDir: e.target.value })}
+              placeholder="C:/backups"
+              className="min-w-0 flex-1 rounded-l-md border border-r-0 px-3 py-2 text-sm outline-none focus:border-cyan-500"
+              style={inputStyle}
+            />
+            <button
+              onClick={pickFolder}
+              title="Choose folder…"
+              className="flex items-center justify-center rounded-r-md border px-2.5"
+              style={inputStyle}
+            >
+              <FolderOpen className="h-4 w-4" style={{ color: "var(--m-muted)" }} />
+            </button>
+          </div>
+        </FieldRow>
+
+        {/* Folder base name */}
+        <FieldRow label="Folder name" sublabel={`Example: ${datedFolderName(job.folderBase)}`}>
+          <input
+            value={job.folderBase}
+            onChange={(e) => onChange({ folderBase: e.target.value })}
+            placeholder="dbbackup"
+            className="w-52 rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500"
+            style={inputStyle}
+          />
+        </FieldRow>
+
+        {/* Delay */}
+        <FieldRow label="Delay (minutes)" sublabel="After the previous job finishes">
+          <NumField
+            value={job.delayMinutes}
+            onChange={(v) => onChange({ delayMinutes: clamp(v, 0, 1440) })}
+            min={0}
+            max={1440}
+            className="w-24"
+            style={inputStyle}
+          />
+        </FieldRow>
+
+        {/* Retention */}
+        <FieldRow label="Retention (days)" sublabel="0 = keep all old folders">
+          <NumField
+            value={job.retentionDays}
+            onChange={(v) => onChange({ retentionDays: clamp(v, 0, 3650) })}
+            min={0}
+            max={3650}
+            className="w-24"
+            style={inputStyle}
+          />
+        </FieldRow>
+      </div>
+      )}
+    </div>
+  );
+}
+
+/** Database checklist that auto-connects (via the chosen SSH + DB profile) to
+ *  load the server's database list, with search + select-all. */
+function MultiDbSelect({
+  ssh,
+  dbProfile,
+  selected,
+  disabled,
+  onChange,
+}: {
+  ssh: UserProfile | undefined;
+  dbProfile: import("../db").DBProfile | undefined;
+  selected: string[];
+  disabled: boolean;
+  onChange: (dbs: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [reloadToken, setReloadToken] = useState(0);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Where to render the panel + how tall it can be, based on room around the
+  // trigger — so the list always fits on-screen and scrolls *inside* itself.
+  const [placement, setPlacement] = useState<{ dir: "down" | "up"; maxH: number }>({
+    dir: "down",
+    maxH: 320,
+  });
+
+  const openDropdown = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      const margin = 12;
+      const below = window.innerHeight - r.bottom - margin;
+      const above = r.top - margin;
+      if (below < 240 && above > below) {
+        setPlacement({ dir: "up", maxH: Math.min(360, above) });
+      } else {
+        setPlacement({ dir: "down", maxH: Math.min(360, below) });
+      }
+    }
+    setOpen(true);
+  };
+
+  // Auto-load the database list whenever the SSH/DB selection changes.
+  useEffect(() => {
+    let cancelled = false;
+    if (!ssh || !dbProfile) {
+      setList([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    fetchDatabaseList(ssh, dbProfile)
+      .then((dbs) => { if (!cancelled) setList(dbs); })
+      .catch((e) => { if (!cancelled) { setError(String(e)); setList([]); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ssh?.id, dbProfile?.id, reloadToken]);
+
+  // System schemas (information_schema, performance_schema, …) are never shown.
+  const userDbs = userDatabases(list);
+  const options = Array.from(new Set([...userDbs, ...userDatabases(selected)]))
+    .filter((db) => db.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => a.localeCompare(b));
+
+  const toggle = (db: string) =>
+    onChange(selected.includes(db) ? selected.filter((x) => x !== db) : [...selected, db]);
+
+  const label = disabled
+    ? "All databases"
+    : selected.length > 0
+      ? `${selected.length} selected`
+      : "Select databases";
+
+  return (
+    <div className="relative w-52">
+      <button
+        ref={btnRef}
+        onClick={() => !disabled && (open ? setOpen(false) : openDropdown())}
+        disabled={disabled}
+        className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm outline-none focus:border-cyan-500 disabled:opacity-50"
+        style={inputStyle}
+      >
+        <span className="truncate" style={{ color: selected.length ? "var(--m-text)" : "var(--m-muted)" }}>
+          {label}
+        </span>
+        <ChevronDown className="ml-1 h-4 w-4 shrink-0" style={{ color: "var(--m-muted)" }} />
+      </button>
+
+      {open && !disabled && (
+        <>
+          {/* click-away backdrop */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className={`absolute left-0 right-0 z-50 flex flex-col rounded-md border shadow-lg ${
+              placement.dir === "up" ? "bottom-full mb-1" : "top-full mt-1"
+            }`}
+            style={{ borderColor: "var(--m-border)", background: "var(--m-chrome)", maxHeight: placement.maxH }}
+          >
+            {/* search + refresh */}
+            <div className="flex shrink-0 items-center gap-1 border-b p-1.5" style={{ borderColor: "var(--m-border)" }}>
+              <div className="flex flex-1 items-center gap-1.5 rounded border px-2 py-1" style={{ borderColor: "var(--m-input-border)", background: "var(--m-input)" }}>
+                <Search className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--m-muted)" }} />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search…"
+                  className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                  style={{ color: "var(--m-text)" }}
+                />
+              </div>
+              <button
+                onClick={() => setReloadToken((t) => t + 1)}
+                title="Reload database list"
+                className="p-1"
+              >
+                <RefreshCw className="h-3.5 w-3.5" style={{ color: "var(--m-muted)" }} />
+              </button>
+            </div>
+
+            {/* select all / clear */}
+            <div className="flex shrink-0 items-center justify-between px-2 py-1 text-xs" style={{ color: "var(--m-muted)" }}>
+              <button onClick={() => onChange(Array.from(new Set([...selected, ...userDbs])))} className="hover:underline">
+                Select all
+              </button>
+              <button onClick={() => onChange([])} className="hover:underline">
+                Clear
+              </button>
+            </div>
+
+            {/* list — takes remaining panel height and scrolls inside itself */}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+              {loading ? (
+                <div className="flex items-center gap-2 px-3 py-2 text-sm" style={{ color: "var(--m-muted)" }}>
+                  <LoaderCircle className="h-4 w-4 animate-spin" /> Connecting…
+                </div>
+              ) : error ? (
+                <div className="px-3 py-2 text-xs" style={{ color: "#ef4444" }}>
+                  Failed to load: {error}
+                </div>
+              ) : options.length === 0 ? (
+                <div className="px-3 py-2 text-sm" style={{ color: "var(--m-muted)" }}>
+                  {ssh && dbProfile ? "No databases." : "Select SSH + User DB first."}
+                </div>
+              ) : (
+                options.map((db) => {
+                  const on = selected.includes(db);
+                  return (
+                    <button
+                      key={db}
+                      onClick={() => toggle(db)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--m-input)]"
+                      style={{ color: "var(--m-text)" }}
+                    >
+                      <span
+                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded border"
+                        style={{
+                          borderColor: on ? "#2563eb" : "var(--m-input-border)",
+                          background: on ? "#2563eb" : "transparent",
+                        }}
+                      >
+                        {on && <Check className="h-3 w-3 text-white" />}
+                      </span>
+                      <span className="truncate">{db}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1881,9 +2547,9 @@ function AccountSection() {
       await pullOnLogin(
         () =>
           window.confirm(
-            "Ditemukan backup Moorix di akun Google ini. Tarik setup (profil SSH, konfigurasi) ke perangkat ini sekarang? Konfigurasi lokal akan ditimpa.",
+            "A Moorix backup was found in this Google account. Pull the setup (SSH profiles, configuration) to this device now? Local configuration will be overwritten.",
           ),
-        () => window.prompt("Masukkan Master Password sinkronisasi:"),
+        () => window.prompt("Enter your sync Master Password:"),
       );
     } catch (err) {
       setError(String(err));

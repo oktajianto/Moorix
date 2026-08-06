@@ -7,6 +7,7 @@ import {
   UserCircle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { ProfileMenu } from "./ProfileMenu";
 import { useSettings } from "../settings";
 import type { Profile, UserProfile } from "../profiles";
@@ -213,7 +214,7 @@ export function TitleBar({
         <WindowButton onClick={onOpenAccount} title="Account">
           <UserCircle className="h-[15px] w-[15px]" />
         </WindowButton>
-        <WindowButton onClick={() => appWindow.minimize()} title="Minimize">
+        <WindowButton onClick={() => void invoke("window_minimize").catch(() => appWindow.minimize())} title="Minimize">
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1" />
           </svg>

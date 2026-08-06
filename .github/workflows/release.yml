@@ -89,9 +89,11 @@ jobs:
             Mobile (Android/iOS) is not part of this release.
           # Generate + upload latest.json so the auto-updater can read it.
           includeUpdaterJson: true
-          # Must be a full (published, non-prerelease) release: the updater's
+          # Pre-release tags (semver with a hyphen, e.g. v0.1.1-pre.4) are published
+          # as GitHub *pre-releases* so they are NOT "latest" — the updater's
           # `releases/latest/download/latest.json` endpoint ignores drafts and
-          # prereleases. Auto-publishes on tag push (delete the release if bad).
+          # prereleases, so testing builds never auto-install. Stable tags (no
+          # hyphen, e.g. v0.1.0) publish as the latest release and do auto-update.
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: ${{ matrix.args }}

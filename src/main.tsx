@@ -29,7 +29,7 @@ function mount() {
 // instance so the store plugin never writes its stale cache over the import.
 maybeAutoPull(() =>
   window.prompt(
-    "Master Password sinkronisasi (untuk menarik setup dari perangkat lain):",
+    "Sync Master Password (to pull the setup from another device):",
   ),
 )
   .then((relaunching) => {
