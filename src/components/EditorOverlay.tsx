@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditorNs } from "monaco-editor";
 import {
-  Loader2, Save, X, WrapText, Maximize2, Minimize2, Minus, Pencil,
+  Loader2, Save, X, WrapText, Maximize2, Minimize2, Minus, Pencil, Search,
   SquareSplitHorizontal, SquareSplitVertical,
 } from "lucide-react";
 
@@ -124,6 +124,48 @@ export function EditorOverlay() {
     return () => window.removeEventListener("keydown", onKey);
   }, [minimized, activePaneId]);
 
+  // Open Monaco's find widget on the active pane's editor. Prefer whichever
+  // editor already holds the caret; otherwise fall back to the one showing the
+  // active pane's document, then to the first editor.
+  const openFind = useCallback(() => {
+    const monaco = monacoRef.current;
+    if (!monaco) return;
+    const editors = monaco.editor.getEditors();
+    if (editors.length === 0) return;
+
+    let target = editors.find((ed: MonacoEditorNs.ICodeEditor) => ed.hasTextFocus()) ?? null;
+    if (!target && activePaneId && tree) {
+      const docId = findLeaf(tree, activePaneId)?.docId;
+      if (docId) {
+        const uri = monaco.Uri.parse(docId).toString();
+        target = editors.find((ed: MonacoEditorNs.ICodeEditor) => ed.getModel()?.uri.toString() === uri) ?? null;
+      }
+    }
+    target ??= editors[0];
+
+    target.focus();
+    void target.getAction("actions.find")?.run();
+  }, [activePaneId, tree]);
+
+  // Ctrl/Cmd+F must open Monaco's find widget, but App's global hotkey
+  // dispatcher (document, capture phase) maps Ctrl+F to the *terminal* find and
+  // preventDefault/stopPropagation-s it — so unless the caret already sits in
+  // Monaco's hidden textarea, the widget never opens. Claim the chord first on
+  // the window (capture runs window → document, so we win) and drive Monaco's
+  // find action directly on the active pane's editor.
+  useEffect(() => {
+    if (minimized) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "f") return;
+      if (!monacoRef.current || monacoRef.current.editor.getEditors().length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openFind();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [minimized, openFind]);
+
   const options = useMemo(
     () => ({
       fontSize: 13,
@@ -198,6 +240,14 @@ export function EditorOverlay() {
           <div className="flex shrink-0 items-center gap-1.5">
             {active?.phase === "ready" && (
               <>
+                <button
+                  onClick={openFind}
+                  title="Find (Ctrl+F)"
+                  className="rounded p-1 hover:bg-black/10"
+                  style={{ color: "var(--m-muted)" }}
+                >
+                  <Search className="h-4 w-4" />
+                </button>
                 <button
                   onClick={() => setWrap((w) => !w)}
                   title={wrap ? "Word wrap: on" : "Word wrap: off"}
