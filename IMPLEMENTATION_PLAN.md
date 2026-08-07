@@ -3,7 +3,7 @@
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
 > Satu codebase yang menjangkau desktop **dan** mobile.
 
-Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publik pertama: `v0.1.0` (2026-08-03)**
+Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-07 · **Rilis publik pertama: `v0.1.0` (2026-08-03)**
 
 ---
 
@@ -31,6 +31,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-03 · **Rilis publi
 | 21 | **Terminal Search** (Find in terminal, **Ctrl+F**) — cari teks di output SSH/CMD/PowerShell, highlight + next/prev, hotkey overridable | ✅ (implementasi; uji native pending — lihat **§16 Fase 21**) |
 | 22 | **SFTP: dropdown folder induk** di address bar — lompat ke folder induk/root tanpa klik Up berkali-kali | ✅ (implementasi; uji native pending — lihat **§16 Fase 22**) |
 | **23** | **Auto-Backup DB** — Settings → menu "Backup DB": list setup auto-backup (jalan saat komputer/app menyala), tiap setup pilih SSH·userDB·database(satu/semua)·folder tujuan; jalan berurutan dgn jeda menit; penanda "sudah jalan hari ini" di store; autostart + notifikasi OS + system tray (hide-to-tray, start-hidden); default **OFF** | ✅ **implementasi** (23A UI · 23B backend+Run manual · 23C runner+penanda · 23D-1 autostart+notif · 23D-2 tray) — uji native pending (lihat **§20**) |
+| **24** | **Notes** — Settings → menu "Notes": list note + Add, editor master-detail; judul wajib (jadi nama list); isi 2 mode: **Teks** (Monaco + pilih bahasa) & **Tabel** (tambah/hapus baris & kolom, teks bebas); **offline-first** (store key `notes`) + **sync terenkripsi** via Drive (numpang pipeline) + **merge per-note** (union `id` · menang `updatedAt` · tombstone `deletedAt`); auto-save (tanpa tombol Save) | 📝 **rancangan disetujui** (diskusi 2026-08-07) — implementasi belum mulai (detail di **§24**) |
 
 > Detail per fase ada di **§16 Progress Log**. Kolom "Status" di-update tiap fase (jangan dihapus).
 
@@ -1253,3 +1254,85 @@ Sebelum disk penuh, job auto-hapus folder backup lama miliknya sendiri.
 - **23B ✅ (implementasi; uji native pending, 2026-08-06)** — Backend backup + tombol Run manual. **Rust** (`db.rs`): command `db_backup_run(db_session_id, databases[], dest_dir, folder_base, retention_days)` → buat folder `<dest>/<base>-ddMonthNameyyyy` (`dated_folder_name`, bulan Inggris via `chrono`, timpa), dump tiap DB **full** ke `<db>.sql` lewat helper `dump_full_database` (reuse `mysqldump --single-transaction --quick` / `pg_dump --no-owner --no-privileges`, kredensial via `--defaults-extra-file`/`.pgpass` mode-600, stream `exec_to_file`), lalu **retensi**: hanya bila **semua** dump sukses & `retention_days>0` → `prune_old_folders` hapus permanen (`remove_dir_all`) folder yg namanya cocok `<base>-<tanggal>` & tanggalnya `< today-N` (guard: hanya anak langsung, hanya yg `parse_dated_folder` valid). Return `BackupRunResult{folder, files[{database,path,ok,error,bytes}], pruned[]}`. Registrasi di `lib.rs`; **`db_export_sql` tidak diubah** (export manual tetap ke Downloads). Dep `chrono` (clock) dipromosikan ke direct. **Frontend**: `runBackupJob(job, ssh)` di `backupDb.ts` (headless connect → resolve db list, `allDatabases`→`dbListDatabases`∖system → `db_backup_run`); tombol **Run** (hijau, ikon Play) di header tiap `BackupJobCard` (tampil walau collapse) → **force-run** dgn **popup progress** (`Toast` indeterminate → sukses/gagal + path folder + jumlah folder terhapus). Validasi pra-run (SSH/User DB/folder/database). **Belum**: runner startup + penanda (23C), update penanda saat manual-run (nyusul 23C).
 - **23A-3 ✅ (implementasi; uji native pending, 2026-08-06)** — (req user): (1) **Collapse kartu job** — tiap `BackupJobCard` punya toggle chevron; collapse menyisakan header (nama job) supaya drag-reorder simpel/pendek. (2) **Dropdown DB viewport-aware** — panel `MultiDbSelect` dibatasi tinggi sesuai ruang layar + **auto flip ke atas** bila tombol di bawah; list `flex-1 min-h-0 overflow-y-auto overscroll-contain` (scroll di dalam dropdown, bukan halaman). (3) **Exclude schema sistem** (§20.1 poin 13) — helper `SYSTEM_DATABASES`/`userDatabases` di `backupDb.ts`; `MultiDbSelect` sembunyikan `information_schema`/`performance_schema`/`mysql`/`sys`/`template0`/`template1` dari checklist & dari "Pilih semua".
 - **23A-2 ✅ (implementasi; uji native pending, 2026-08-06)** — penyempurnaan UX (req user): (1) **Folder picker native** — tombol folder buka `open({directory:true})` via **`tauri-plugin-dialog`** (baru: Cargo dep + `lib.rs` `.plugin(tauri_plugin_dialog::init())` + capability `dialog:default` + npm `@tauri-apps/plugin-dialog`). (2) **Database checklist auto-connect** — pilih SSH + User DB → komponen `MultiDbSelect` auto-fetch daftar database asli (checklist multi-pilih + search + Pilih semua/Kosongkan + refresh). Helper baru `fetchDatabaseList(ssh, db)` di `backupDb.ts`: buka SSH throwaway via `sshOpenFromProfile` (Channel dummy) → `dbOpen` → `dbListDatabases` → tutup (`dbClose` + `session_close`) — **ini juga jalur "headless connect" yang dipakai runner 23B/C**. Ganti input koma → dropdown. (3) **Drag-and-drop reorder** kartu job (HTML5 DnD, handle `GripVertical`, highlight drop target); panah ↑↓ tetap ada.
+
+---
+
+## 24. Notes (catatan mirip sticky-note) — **rancangan disetujui 2026-08-07**
+
+Fitur catatan personal di dalam Moorix. Menu **Notes** di sidebar Settings menampilkan daftar note; tombol **Add** membuat note baru. Tiap note punya **judul** (wajib — jadi nama di list) dan **isi** dengan dua mode. Karena Moorix tool database, sasaran utama isi = snippet SQL/JSON/config/error log, jadi mode teks pakai **Monaco** (bukan textarea polos).
+
+### 24.1 Keputusan (diskusi user 2026-08-07)
+- **Offline-first**: note disimpan di store `moorix.json` key **`notes`** via `@tauri-apps/plugin-store` → persist lokal instan, **jalan tanpa login/koneksi**.
+- **Sync terenkripsi**: numpang pipeline Google Drive yang sudah ada (`export_sync_data`/`import_sync_data`, blob `moorix-sync.bin`). **Tidak** bikin server sync sendiri (folder `sync-server/` = sisa dev lama, tidak dipakai). Enkripsi otomatis ikut pipeline.
+- **Merge per-note (aktif di v1)**, bukan LWW blob — supaya janji "**tidak ada note hilang**" saat 2 komputer benar terjadi: gabung union by `id`, menang `updatedAt` terbaru, tombstone (`deletedAt`) menang. (Diskusi: LWW murni ditolak karena menimpa; tafsiran merge = **per-note**, bukan per-field/CRDT.)
+- **Soft-delete** (tombstone `deletedAt`) wajib walau merge cuma per-note — kalau hard-delete, note "hidup lagi" dari device lain saat merge.
+- **Auto-save** (debounce), **tanpa tombol Save**. Mode teks pakai **Monaco** + dropdown pilih bahasa. Add = **inline draft** (bukan modal).
+
+### 24.2 Model data (`src/notes.ts`)
+```ts
+type NoteColumn = { id: string; name: string };
+type Note = {
+  id: string;                     // uuid — kunci identitas lintas device (untuk merge)
+  title: string;                  // WAJIB — nama di list
+  mode: "text" | "table";
+  body: string;                   // dipakai saat mode "text"
+  language?: string;              // Monaco language, default "plaintext"
+  columns: NoteColumn[];          // dipakai saat mode "table"
+  rows: Record<string, string>[]; // tiap row: { [columnId]: nilai }
+  pinned?: boolean;
+  order: number;                  // sort manual
+  createdAt: number;
+  updatedAt: number;              // penentu pemenang merge + tampilan "terakhir diubah"
+  deletedAt?: number;             // tombstone (soft delete)
+};
+```
+- `body` **dan** `columns/rows` disimpan bareng → ganti mode tidak menghapus data mode lain (toggle mode = ubah cara tampil saja).
+- `rows` pakai `Record<columnId, value>` (bukan array posisi) → hapus/tambah kolom di tengah **tidak** menggeser data kolom lain.
+
+### 24.3 Sync & merge (temuan kode)
+- **Notes otomatis ikut sync tanpa ubah Rust.** `get_sync_payload` pakai **blacklist** `LOCAL_ONLY_KEYS` (`sync.rs:30` = `googleAccount`/`dbBackup`/`dbBackupRuns`) — key lain (termasuk `notes`) ikut diekspor & terenkripsi.
+- **Import mengganti key `notes` bulat-bulat.** `apply_sync_payload` (`sync.rs:114`) `store.set(key, value)` per key → array `notes` remote **menimpa** lokal = LWW. **Di sinilah merge disisipkan.**
+- **Titik merge = Rust `apply_sync_payload`, khusus key `"notes"`** (rekomendasi): baca notes lokal saat ini + notes masuk → `mergeNotes` (union `id` · menang `updatedAt` · tombstone menang) → set hasil. Alasan: satu-satunya *choke point* saat remote ketemu lokal (merge hanya perlu saat **pull**; push ekspor apa adanya). Menghindari stash-lokal-lewat-relaunch yang rapuh. Aturannya JSON generik (`id`/`updatedAt`/`deletedAt`) — tak perlu tahu bentuk penuh `Note`.
+  - **Alternatif (TIDAK direkomendasikan):** reconcile di TS via stash `localStorage` di `cloudSync.ts` + merge saat boot di `main.tsx` sebelum `mount()`. Lebih banyak bagian bergerak/rawan timing.
+- `mergeNotes` versi TS tetap ditulis di `notes.ts` untuk **unit test paritas** + referensi.
+- **GC tombstone**: buang note yang `deletedAt`-nya sudah lewat masa aman (mis. **30 hari**) di `loadNotes()`/boot. Jangan terlalu cepat — device yang belum lihat tombstone bisa membangkitkannya lagi.
+
+### 24.4 UI
+- Section **`notes`** di sidebar Settings: tambah ke union `SectionId` + entri `SIDEBAR` (ikon `StickyNote`) + cabang render di `SettingsPage.tsx`.
+- **Master-detail** di area konten:
+  - **List (≈280px)**: tombol **Add** + **search** (filter judul + isi) + item (judul · badge mode `teks`/`tabel` · waktu relatif · pin 📌). Urut: pinned dulu → `updatedAt` terbaru. Note ber-`deletedAt` **tidak** ditampilkan.
+  - **Editor**: input **Judul** (wajib + validasi "Judul wajib"), toolbar (toggle `Teks|Tabel` · pin · hapus · dropdown bahasa · label "terakhir diubah"). Auto-save debounce → `saveNotes()` + `scheduleAutoPush()`.
+- **Mode Teks**: **Monaco** via `@monaco-editor/react` (reuse `src/monaco.ts`); container **tinggi pasti + `automaticLayout`**, `wordWrap:"on"`, dispose saat ganti note; dropdown bahasa (`plaintext`/`sql`/`json`/`js`/`markdown`).
+- **Mode Tabel** (`src/components/NoteTable.tsx`): grid editable — tambah/hapus **baris**, tambah/hapus/rename **kolom**, edit sel; teks bebas (scope v1). Model `rows[i][columnId]`.
+- **Add inline**: klik `+` → draft note baru (default mode Teks), auto-terpilih, fokus ke Judul. Judul kosong **dan** isi kosong saat pindah/tutup → draft dibuang.
+- **Empty states**: belum ada note (ajakan Add) · belum pilih note (placeholder).
+- **Hapus** = soft-delete (`deletedAt`) + konfirmasi singkat; hilang dari list, tidak terhapus dari disk (biar merge/tombstone jalan).
+
+### 24.5 Pentahapan (tiap fase berdiri sendiri & bisa diuji)
+| Sub-fase | Isi | File |
+|---|---|---|
+| **24A — Lapisan data** | Tipe `Note`/`NoteColumn` · CRUD (`load/saveNotes`, `createNote`, `updateNote` bump `updatedAt`, `softDelete`) · `visibleNotes` · `mergeNotes` murni · `uuid`/`now` | **baru** `src/notes.ts` |
+| **24B — UI section + list** | `SectionId`+`SIDEBAR`+render · kerangka master-detail (list: Add/search/item/empty · seleksi · editor placeholder). **Uji: restart app → note tetap ada (offline-first)** | edit `SettingsPage.tsx` · **baru** `NotesSection.tsx` |
+| **24C — Editor 2 mode** | Judul wajib+validasi · toolbar · auto-save+`scheduleAutoPush` · **Teks (Monaco + bahasa)** · **Tabel (grid)** | edit `NotesSection.tsx` · **baru** `NoteTable.tsx` |
+| **24D — Sync + merge** | Merge per-note di `apply_sync_payload` (key `notes`). **Uji: A edit note-1, B buat note-2 → dua-duanya selamat; hapus → tak hidup lagi** | edit `src-tauri/src/sync.rs` |
+| **24E — Poles (opsional)** | Sort pinned+updatedAt · waktu relatif · search isi tabel · konfirmasi hapus · GC tombstone (>30 hari) · (opsional) "Baru dihapus"/restore · (opsional) pintu cepat ke Notes dari luar Settings | beberapa di atas |
+
+> Titik henti MVP terasa lengkap: **akhir 24D**. 24E murni penghalusan.
+
+### 24.6 Sentuhan file (ringkas)
+| File | Aksi |
+|---|---|
+| `src/notes.ts` | **baru** — tipe + CRUD + `mergeNotes` |
+| `src/components/SettingsPage.tsx` | edit — daftar section `notes` |
+| `src/components/NotesSection.tsx` | **baru** — master-detail + editor + auto-save |
+| `src/components/NoteTable.tsx` | **baru** — grid tabel |
+| `src-tauri/src/sync.rs` | edit — merge per-note di `apply_sync_payload` |
+
+**Tidak perlu:** migrasi data (key baru) · ubah server · ubah pipeline enkripsi/Drive.
+
+### 24.7 Batas scope v1 (sengaja, biar tidak jadi "Notion mini")
+- Kolom tabel = **teks bebas** saja (tak ada tipe angka/tanggal/validasi/formula).
+- Merge **per-note**, bukan per-field/CRDT → edit note **yang sama** di 2 device barengan tetap LWW (satu versi kalah). Cukup untuk pemakaian pribadi.
+- Menu di **dalam Settings** (sesuai permintaan); pintu cepat dari luar Settings = pertimbangan nanti.
+
+**Status:** rancangan disetujui (diskusi 2026-08-07). Implementasi belum mulai.
