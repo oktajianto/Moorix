@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "backup-banner",
+  "description": "Capability for the always-on-top auto-backup progress banner window: listen for the backup-activity event and reposition itself above the taskbar.",
+  "windows": ["backup-banner"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-position",
+    "core:window:allow-set-always-on-top"
+  ]
+}

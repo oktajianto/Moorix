@@ -43,13 +43,23 @@ fn window_minimize(state: tauri::State<AppState>, window: tauri::WebviewWindow) 
     }
 }
 
-/// Reflect backup activity on the system tray icon's tooltip (Fase 23D): while a
-/// backup runs, hovering the tray icon near the clock shows what's happening.
+/// Payload for the `backup-activity` event the banner window listens to.
+#[cfg(desktop)]
+#[derive(Clone, serde::Serialize)]
+struct BackupActivity {
+    active: bool,
+    label: String,
+}
+
+/// Reflect backup activity in two places (Fase 23D / 23E): the tray icon tooltip
+/// (hover near the clock) **and** a small always-on-top banner in the bottom-right
+/// corner, above the taskbar, so an in-progress backup is visible even while the
+/// main window is hidden to the tray.
 #[tauri::command]
 fn set_backup_activity(app: tauri::AppHandle, active: bool, label: String) {
     #[cfg(desktop)]
     {
-        use tauri::Manager;
+        use tauri::{Emitter, Manager};
         if let Some(tray) = app.tray_by_id("main") {
             let tip = if active {
                 if label.is_empty() {
@@ -62,6 +72,22 @@ fn set_backup_activity(app: tauri::AppHandle, active: bool, label: String) {
             };
             let _ = tray.set_tooltip(Some(tip));
         }
+
+        // Drive the desktop progress banner: show it while a backup runs (and let
+        // it re-read the label via the event), hide it when everything is idle.
+        if let Some(win) = app.get_webview_window("backup-banner") {
+            let _ = app.emit_to(
+                "backup-banner",
+                "backup-activity",
+                BackupActivity { active, label: label.clone() },
+            );
+            if active {
+                let _ = win.show();
+                let _ = win.set_always_on_top(true);
+            } else {
+                let _ = win.hide();
+            }
+        }
     }
     #[cfg(not(desktop))]
     {
@@ -71,7 +97,21 @@ fn set_backup_activity(app: tauri::AppHandle, active: bool, label: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance MUST be the very first plugin (Tauri requirement): when a
+    // second Moorix is launched (e.g. autostart already put one in the tray and
+    // the user double-clicks the app), don't spawn another process/tray icon —
+    // just surface the running window. Desktop-only; mobile is single-instance
+    // by platform.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main_window(app);
+        }));
+    }
+
+    builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
