@@ -67,3 +67,14 @@ body {
 .moorix-toast-indeterminate {
   animation: moorix-indeterminate 1.1s ease-in-out infinite;
 }
+
+/* Find-in-row highlight overlay (Edit-row popup). The backdrop mirrors the
+   textarea/input text so query matches can be painted with a yellow <mark>
+   behind the real (transparent-background) control. It reserves the same
+   scrollbar gutter as the textarea — matching the default scrollbar width so
+   wrapped lines line up — but paints its own scrollbar transparent. */
+.m-hl-backdrop::-webkit-scrollbar-thumb,
+.m-hl-backdrop::-webkit-scrollbar-track,
+.m-hl-backdrop::-webkit-scrollbar-corner {
+  background: transparent;
+}
