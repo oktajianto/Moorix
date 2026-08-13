@@ -3,7 +3,7 @@
 > Cross-platform terminal & SSH client, dibangun dengan **Tauri 2**.
 > Satu codebase yang menjangkau desktop **dan** mobile.
 
-Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-07 · **Rilis publik pertama: `v0.1.0` (2026-08-03)**
+Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-13 · **Rilis publik pertama: `v0.1.0` (2026-08-03)** · **Rilis stabil terakhir: `v0.1.1` (2026-08-13)**
 
 ---
 
@@ -22,12 +22,12 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-07 · **Rilis publi
 | 7B | Android build → **signed release APK** | ✅ |
 | 8 | Serial (desktop) + Telnet transports | ✅ |
 | 9 | Advanced — SSH port forwarding **Local + Dynamic** | 🟡 (SFTP ✅ Fase 11 · sync ✅ Fase 17; **sisa**: Remote -R, jump host ⬜) |
-| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ✅ — terakhir **`v0.1.0`** rilis publik, 2026-08-03) |
+| 10 | Settings → Application + Appearance (ala Tabby) + **auto-update silent** (GitHub Releases) | ✅ (publish rilis ber-signing: ✅ — rilis publik pertama **`v0.1.0`** 2026-08-03 · terakhir/latest **`v0.1.1`** 2026-08-13) |
 | 11 | **SFTP file manager** (dual-pane lokal/remote, upload/download rekursif, DnD, ops remote) | ✅ T1 backend · T2 panel+navigasi · T3 transfer rekursif+progress+cancel · T4 drag-and-drop (in-app + OS drop) · T5 ops mkdir/rename/delete + menu klik-kanan |
 | 16 | **Google login (OAuth)** di Account & Sync + OAuth app **In production** + CI secret wiring + rilis `v0.1.0-pre.7` | ✅ |
 | 17 | **Google Drive sync nyata** (Push/Pull terenkripsi ke appDataFolder, refresh token silent) + **Account UI** (kartu profil + logout) + README global | ✅ |
 | 18–19 | **SFTP edit in-app (Monaco)** + **Editor multi-file** (tab, minimize, split view) | ✅ (detail di §16 Fase 18–19) |
-| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | ✅ **rilis `0.1.0`** (2026-08-03) · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql). Sisa: uji native menyeluruh (lihat **§19**) |
+| **20** | **Database Manager native** — MySQL/MariaDB + PostgreSQL via SSH tunnel (browse · SQL editor · edit/insert/delete · create/drop/rename · export/import `.sql`) | ✅ **rilis `0.1.0`** (2026-08-03) · ✅ **implementasi tuntas** — **20A** (MVP: konek·SQL·browse·autocomplete·tipe ramah) · **20B** (Structure·edit/insert/delete·multi-delete) · **20C** (export/import·drop/rename) · **20D** (PostgreSQL: 20D-1 konek/tree/SQL · 20D-2 browse/structure · 20D-3 edit/DDL · 20D-4 pg_dump/psql) · ✅ **find-in-row** di popup Edit row (cari nama kolom + isi nilai, counter n/m, next/prev ↑/↓, auto-scroll, highlight amber; `v0.1.1`). Sisa: uji native menyeluruh (lihat **§19**) |
 | 21 | **Terminal Search** (Find in terminal, **Ctrl+F**) — cari teks di output SSH/CMD/PowerShell, highlight + next/prev, hotkey overridable | ✅ (implementasi; uji native pending — lihat **§16 Fase 21**) |
 | 22 | **SFTP: dropdown folder induk** di address bar — lompat ke folder induk/root tanpa klik Up berkali-kali | ✅ (implementasi; uji native pending — lihat **§16 Fase 22**) |
 | **23** | **Auto-Backup DB** — Settings → menu "Backup DB": list setup auto-backup (jalan saat komputer/app menyala), tiap setup pilih SSH·userDB·database(satu/semua)·folder tujuan; jalan berurutan dgn jeda menit; penanda "sudah jalan hari ini" di store; autostart + notifikasi OS + system tray (hide-to-tray, start-hidden); default **OFF** | ✅ **implementasi** (23A UI · 23B backend+Run manual · 23C runner+penanda · 23D-1 autostart+notif · 23D-2 tray) — uji native pending (lihat **§20**) |
@@ -41,7 +41,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-07 · **Rilis publi
 
 ### 🔴 Wajib — urutan disarankan
 1. **Lengkapi file kunci lokal** (§0B) — restore dari repo `all_key_mine` **sebelum** build rilis desktop/Android.
-2. ~~**Publikasikan GitHub Release ber-signing**~~ ✅ **SELESAI** (terakhir `v0.1.0-pre.7`, 2026-07-18 — lihat Fase 16). Secret repo kini **3**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `MOORIX_GOOGLE_CLIENT_SECRET`.
+2. ~~**Publikasikan GitHub Release ber-signing**~~ ✅ **SELESAI** (terakhir `v0.1.1`, 2026-08-13 — rilis stabil/latest; lihat Fase 16). Secret repo kini **3**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `MOORIX_GOOGLE_CLIENT_SECRET`.
 
    **📋 Prosedur rilis (WAJIB tiap tag baru):**
    1. **Bump versi** di 4 file: `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `Cargo.lock` (updater bandingkan versi build ini, bukan nama tag).
