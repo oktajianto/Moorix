@@ -287,10 +287,17 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 build_tray(app)?;
-                // Launched at login via autostart (`--autostart`)? Stay hidden in
-                // the tray; otherwise show the window (it starts hidden, see conf).
+                // Launched at login via autostart? Stay hidden in the tray;
+                // otherwise show the window (it starts hidden, see conf). The
+                // registry autostart passes `--autostart`; the Store build's
+                // StartupTask can't pass args, so detect it via WinRT activation.
                 use tauri::Manager;
-                let autostarted = std::env::args().any(|a| a == "--autostart");
+                #[allow(unused_mut)]
+                let mut autostarted = std::env::args().any(|a| a == "--autostart");
+                #[cfg(all(windows, feature = "msstore"))]
+                if win_startup::launched_by_startup_task() {
+                    autostarted = true;
+                }
                 if let Some(w) = app.get_webview_window("main") {
                     if !autostarted {
                         let _ = w.show();

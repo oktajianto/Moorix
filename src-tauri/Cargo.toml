@@ -74,7 +74,7 @@ tauri-plugin-single-instance = "2"
 # StartupTask instead. Only pulled in when the `msstore` feature is on; version
 # matches the one already in the Tauri dependency tree.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["ApplicationModel", "Foundation"], optional = true }
+windows = { version = "0.62", features = ["ApplicationModel", "ApplicationModel_Activation", "Foundation"], optional = true }
 # The `windows` facade doesn't re-export the async projection types, so depend on
 # windows-future directly to name IAsyncOperation / AsyncStatus (we block on the
 # op via the inherent Status()/GetResults() methods). Version tracks windows 0.62.

@@ -10,7 +10,8 @@
 //! The `TaskId` here MUST match the `TaskId` in `msix/AppxManifest.template.xml`.
 
 use windows::core::{RuntimeType, HSTRING};
-use windows::ApplicationModel::{StartupTask, StartupTaskState};
+use windows::ApplicationModel::Activation::ActivationKind;
+use windows::ApplicationModel::{AppInstance, StartupTask, StartupTaskState};
 use windows_future::{AsyncStatus, IAsyncOperation};
 
 const TASK_ID: &str = "MoorixAutostart";
@@ -54,6 +55,19 @@ pub fn state() -> Result<String, String> {
     let task = get_task()?;
     let s = task.State().map_err(|e| e.to_string())?;
     Ok(label(s))
+}
+
+/// True when this process was launched by the packaged StartupTask (i.e. at OS
+/// login), so the app should start hidden in the tray rather than showing its
+/// window. Replaces the `--autostart` argv signal used by the non-Store build,
+/// since a StartupTask can't pass launch arguments. Returns false when launched
+/// normally (Start menu) or when running unpackaged (no activation contract).
+pub fn launched_by_startup_task() -> bool {
+    let args = match AppInstance::GetActivatedEventArgs() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    matches!(args.Kind(), Ok(k) if k == ActivationKind::StartupTask)
 }
 
 /// Enable or disable launch-at-login. Returns the resulting state label.
