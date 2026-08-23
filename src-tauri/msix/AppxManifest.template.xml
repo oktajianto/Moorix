@@ -58,7 +58,7 @@
       <uap:VisualElements
         DisplayName="Moorix"
         Description="Moorix — cross-platform terminal &amp; SSH client"
-        BackgroundColor="transparent"
+        BackgroundColor="#FFFFFF"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
         <uap:DefaultTile
