@@ -52,6 +52,15 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-13 · **Rilis publi
      - **Paragraf intro** (1 kalimat) di paling atas → jadi *summary*.
      - Detail **HARUS bullet** (`- …`) di bawah heading. Heading → label warna: **`### Added`** / New / Feature(s) = hijau · **`### Fixed`** / Fixes / Bugfixes = biru · **`### Changed`** / Improved / Improvements = kuning. Heading lain/tanpa heading = default *Changed*. `**bold**`/`` `code` ``/`[link](url)` otomatis di-strip.
      - **Isi lengkap**: cantumkan **semua** perubahan/perbaikan yang masuk di rilis itu (dari commit-commit sejak tag sebelumnya), bukan ringkasan singkat.
+     - **WAJIB akhiri dengan blok Download/Install** (di bawah bullet perubahan) yang mengarahkan Windows ke **Microsoft Store** dulu, baru installer langsung. Blok ini diabaikan `parseBody()` (tak ada heading bullet), tapi tampil di halaman GitHub Release. Format:
+       ```
+       ## Download
+
+       **Windows:** [Get it from the Microsoft Store](https://apps.microsoft.com/detail/9PFM3C4LWS8B) (recommended — no SmartScreen, auto-updates), or the `.exe` below (SmartScreen prompt → More info → Run anyway).
+
+       **macOS:** `.dmg` below · **Linux:** `.AppImage` / `.deb` below.
+       ```
+       Store id `9PFM3C4LWS8B` · link https://apps.microsoft.com/detail/9PFM3C4LWS8B · PFN `oktajianto.com.Moorix_44216rjve3r6j` (lihat §25 untuk pipeline MSIX).
    - **Catatan:** message **git tag TIDAK dipakai** website (workspace baca body Release). Contoh yang sudah benar: rilis `v0.1.0` & `v0.1.1-pre.1`.
 3. **Section Settings yang masih placeholder** — **Shell**, **SSH**, **Window**, **Vault**, **Config file** (+ **Plugins** bila ditambah ke sidebar). Minimal buat fungsional/tampil rapi ala Tabby (pola sama seperti section yang sudah jadi).
 4. **Uji end-to-end di window native** (tak bisa dari harness): transfer SFTP nyata ke VPS, hotkeys, auto-open/restore tabs, DnD OS→panel, klik-kanan terminal (menu native), Serial/Telnet.

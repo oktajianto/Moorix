@@ -91,9 +91,24 @@ Switching between applications wastes time.
 
 ---
 
-## Quick Start
+## Download / Install
 
-> **⬇️ Try it now — free:** grab the installer for Windows (`.exe`), macOS (`.dmg`), or Linux (`.AppImage`/`.deb`) from the **[Releases](https://github.com/oktajianto/Moorix/releases/latest)** page, install in seconds, and feel the difference of managing your VPS from a single window. Your server will never feel far away again.
+### Windows
+
+**Get it from the Microsoft Store** — recommended: no SmartScreen warnings, installs and updates automatically.
+
+<a href="https://apps.microsoft.com/detail/9PFM3C4LWS8B"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200" alt="Download Moorix from the Microsoft Store" /></a>
+
+Prefer a direct download? Grab the `.exe` installer from the **[Releases](https://github.com/oktajianto/Moorix/releases/latest)** page. The direct installer isn't signed, so Windows may show a SmartScreen prompt — click **More info → Run anyway**. (Installing from the Store avoids this.)
+
+### macOS & Linux
+
+Download from the **[Releases](https://github.com/oktajianto/Moorix/releases/latest)** page:
+
+- **macOS** — `.dmg`
+- **Linux** — `.AppImage` or `.deb`
+
+Install in seconds and manage your VPS from a single window. Your server will never feel far away again.
 
 ---
 
