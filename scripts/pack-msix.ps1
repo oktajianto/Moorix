@@ -130,10 +130,11 @@ foreach ($a in $assets) {
   Copy-Item $src (Join-Path $AssetsDir $a) -Force
 }
 
-# Taskbar / Start icon: the logo is a glyph on transparency, so without
-# `altform-unplated` target-size variants Windows plates it on a dark square.
-# Generate targetsize + unplated PNGs (MRT picks the unplated one for the
-# taskbar) by downscaling the transparent 512px master.
+# Taskbar / Start icon: the logo is a glyph on transparency, so a plated icon
+# renders on a dark square. We generate ONLY `altform-unplated` target-size
+# variants (no plain plated targetsize) so it's the only target-size candidate
+# and every context (taskbar included, not just the Start list) shows it
+# unplated. Downscaled from the transparent 512px master.
 $iconMaster = Join-Path $IconsDir "icon.png"
 if (Test-Path $iconMaster) {
   Add-Type -AssemblyName System.Drawing
@@ -149,12 +150,11 @@ if (Test-Path $iconMaster) {
     $g.DrawImage($src, 0, 0, $s, $s)
     $g.Dispose()
     $png = [System.Drawing.Imaging.ImageFormat]::Png
-    $bmp.Save((Join-Path $AssetsDir ("Square44x44Logo.targetsize-$s.png")), $png)
     $bmp.Save((Join-Path $AssetsDir ("Square44x44Logo.targetsize-${s}_altform-unplated.png")), $png)
     $bmp.Dispose()
   }
   $src.Dispose()
-  Info "Icon variants (targetsize + unplated) generated"
+  Info "Icon variants (unplated targetsize) generated"
 } else {
   Info "WARN: $iconMaster not found; skipping unplated icon variants (taskbar icon may be plated)"
 }
