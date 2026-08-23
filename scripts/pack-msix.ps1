@@ -130,6 +130,35 @@ foreach ($a in $assets) {
   Copy-Item $src (Join-Path $AssetsDir $a) -Force
 }
 
+# Taskbar / Start icon: the logo is a glyph on transparency, so without
+# `altform-unplated` target-size variants Windows plates it on a dark square.
+# Generate targetsize + unplated PNGs (MRT picks the unplated one for the
+# taskbar) by downscaling the transparent 512px master.
+$iconMaster = Join-Path $IconsDir "icon.png"
+if (Test-Path $iconMaster) {
+  Add-Type -AssemblyName System.Drawing
+  $src = New-Object System.Drawing.Bitmap $iconMaster
+  foreach ($s in 16, 24, 32, 48, 256) {
+    $bmp = New-Object System.Drawing.Bitmap $s, $s
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode   = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.PixelOffsetMode     = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $g.SmoothingMode       = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $g.CompositingQuality  = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+    $g.Clear([System.Drawing.Color]::Transparent)
+    $g.DrawImage($src, 0, 0, $s, $s)
+    $g.Dispose()
+    $png = [System.Drawing.Imaging.ImageFormat]::Png
+    $bmp.Save((Join-Path $AssetsDir ("Square44x44Logo.targetsize-$s.png")), $png)
+    $bmp.Save((Join-Path $AssetsDir ("Square44x44Logo.targetsize-${s}_altform-unplated.png")), $png)
+    $bmp.Dispose()
+  }
+  $src.Dispose()
+  Info "Icon variants (targetsize + unplated) generated"
+} else {
+  Info "WARN: $iconMaster not found; skipping unplated icon variants (taskbar icon may be plated)"
+}
+
 # Manifest: replace tokens -> layout\AppxManifest.xml
 $manifest = [System.IO.File]::ReadAllText($Template)
 $manifest = $manifest.Replace("{{IDENTITY_NAME}}",     $IdentityName)
@@ -140,6 +169,23 @@ $ManifestOut = Join-Path $LayoutDir "AppxManifest.xml"
 # MSIX manifest must be UTF-8 without BOM.
 [System.IO.File]::WriteAllText($ManifestOut, $manifest, (New-Object System.Text.UTF8Encoding($false)))
 Info "Layout assembled: $LayoutDir"
+
+# Build resources.pri so MRT can resolve the qualified icon variants (targetsize
+# / altform-unplated). Without it Windows only uses the exact manifest asset and
+# plates the taskbar icon. Also expected by Store certification.
+$MakePri = Find-SdkTool "makepri.exe"
+if ($MakePri) {
+  $priConfig = Join-Path $OutDir "priconfig.xml"
+  $priOut    = Join-Path $LayoutDir "resources.pri"
+  if (Test-Path $priConfig) { Remove-Item $priConfig -Force }
+  & $MakePri createconfig /cf $priConfig /dq en-US /o | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail "makepri createconfig failed (exit $LASTEXITCODE)" }
+  & $MakePri new /pr $LayoutDir /cf $priConfig /mn $ManifestOut /of $priOut /o | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail "makepri new failed (exit $LASTEXITCODE)" }
+  Info "resources.pri built"
+} else {
+  Info "WARN: makepri.exe not found; packing without resources.pri (taskbar icon may be plated)"
+}
 
 # --- 3. Pack -----------------------------------------------------------------
 $MsixOut = Join-Path $OutDir "Moorix-$Version4.msix"
@@ -181,6 +227,13 @@ if ($Sign -or $Install) {
   Write-Host "  Import-Certificate -FilePath `"$cer`" -CertStoreLocation Cert:\LocalMachine\TrustedPeople" -ForegroundColor Yellow
 
   if ($Install) {
+    # Remove any existing install first so a same-version content change (dev
+    # iteration) reinstalls cleanly instead of erroring "already installed".
+    $existing = Get-AppxPackage -Name $IdentityName -ErrorAction SilentlyContinue
+    if ($existing) {
+      Info "Removing existing package $($existing.PackageFullName) ..."
+      $existing | Remove-AppxPackage -ErrorAction SilentlyContinue
+    }
     Info "Installing MSIX (Add-AppxPackage) ..."
     try {
       Add-AppxPackage -Path $MsixOut
