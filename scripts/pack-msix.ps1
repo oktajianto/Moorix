@@ -26,9 +26,9 @@
 [CmdletBinding()]
 param(
   [string]$Version,
-  [string]$IdentityName    = "Moorix.Dev",
-  [string]$Publisher       = "CN=Moorix Dev",
-  [string]$PublisherDisplay= "Moorix Dev",
+  [string]$IdentityName,
+  [string]$Publisher,
+  [string]$PublisherDisplay,
   [switch]$SkipBuild,
   [switch]$Sign,
   [switch]$Install
@@ -51,6 +51,17 @@ function Info($m) { Write-Host "[pack-msix] $m" -ForegroundColor Cyan }
 function Fail($m) { Write-Host "[pack-msix] ERROR: $m" -ForegroundColor Red; exit 1 }
 
 if (-not (Test-Path $Template)) { Fail "Manifest template not found: $Template" }
+
+# --- Identity: explicit params > store-identity.json (real Partner Center values,
+#     Fase 25C) > local self-signed test defaults. -----------------------------
+$identityFile = Join-Path $MsixSrc "store-identity.json"
+$fileId = $null
+if (Test-Path $identityFile) {
+  try { $fileId = Get-Content $identityFile -Raw | ConvertFrom-Json } catch { $fileId = $null }
+}
+if (-not $IdentityName)     { $IdentityName     = if ($fileId) { $fileId.identityName }        else { "Moorix.Dev" } }
+if (-not $Publisher)        { $Publisher        = if ($fileId) { $fileId.publisher }            else { "CN=Moorix Dev" } }
+if (-not $PublisherDisplay) { $PublisherDisplay = if ($fileId) { $fileId.publisherDisplayName } else { "Moorix Dev" } }
 
 # --- Version: read from tauri.conf.json, normalise to 4 parts (revision 0) ----
 if (-not $Version) {

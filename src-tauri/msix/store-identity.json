@@ -1,0 +1,6 @@
+{
+  "_comment": "Public Microsoft Store package identity for Moorix, from Partner Center -> Product identity (Fase 25C). Not secret: these values are printed in every published package. pack-msix.ps1 reads this to stamp AppxManifest. Store ID 9PFM3C4LWS8B; PFN oktajianto.com.Moorix_44216rjve3r6j.",
+  "identityName": "oktajianto.com.Moorix",
+  "publisher": "CN=212C59D6-8E60-48FC-BFC8-F5EDD847F490",
+  "publisherDisplayName": "oktajianto.com"
+}
