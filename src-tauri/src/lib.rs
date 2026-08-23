@@ -13,6 +13,8 @@ mod ssh;
 mod state;
 mod sync;
 mod telnet;
+#[cfg(all(windows, feature = "msstore"))]
+mod win_startup;
 
 use state::AppState;
 
@@ -37,6 +39,37 @@ fn set_tray_mode(state: tauri::State<AppState>, enabled: bool) {
 #[tauri::command]
 fn is_store_build() -> bool {
     cfg!(feature = "msstore")
+}
+
+/// Read the packaged StartupTask state (Fase 25B-2). Only meaningful in the MSIX
+/// Store build on Windows; elsewhere it errors and the frontend falls back to the
+/// registry autostart plugin. Returns a label: `enabled` / `disabled` /
+/// `disabledByUser` / `disabledByPolicy` / `enabledByPolicy`.
+#[tauri::command]
+fn startup_task_state() -> Result<String, String> {
+    #[cfg(all(windows, feature = "msstore"))]
+    {
+        win_startup::state()
+    }
+    #[cfg(not(all(windows, feature = "msstore")))]
+    {
+        Err("startup task is only available in the Microsoft Store build".into())
+    }
+}
+
+/// Enable/disable the packaged StartupTask (Fase 25B-2). Returns the resulting
+/// state label (see `startup_task_state`).
+#[tauri::command]
+fn startup_task_set(enabled: bool) -> Result<String, String> {
+    #[cfg(all(windows, feature = "msstore"))]
+    {
+        win_startup::set(enabled)
+    }
+    #[cfg(not(all(windows, feature = "msstore")))]
+    {
+        let _ = enabled;
+        Err("startup task is only available in the Microsoft Store build".into())
+    }
 }
 
 /// Title-bar minimize button: hide to tray when tray mode is on, otherwise a
@@ -234,6 +267,8 @@ pub fn run() {
             set_tray_mode,
             window_minimize,
             is_store_build,
+            startup_task_state,
+            startup_task_set,
         ])
         .on_window_event(|window, event| {
             // Tray mode (Fase 23D-2): closing the window hides it to the tray

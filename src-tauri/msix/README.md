@@ -54,6 +54,7 @@ Then upload `src-tauri/target/msix/Moorix-<version>.msix` in a new submission.
 - **25B-1 ✅** — `msstore` Cargo feature: in-app updater disabled + its UI hidden
   (`is_store_build` command / `src/appFlavor.ts`). The pack script builds with
   `--features msstore`.
-- **25B-2 ⬜** — wire "Run at startup" to the manifest `StartupTask` (WinRT).
+- **25B-2 ✅** — "Run at startup" toggles the manifest `StartupTask` via WinRT
+  (`src-tauri/src/win_startup.rs`, `src/autostart.ts`).
 - **25C ⬜** — native testing with the real Partner Center identity.
 - **25D ⬜** — submit & certification.

@@ -25,7 +25,7 @@ tauri-build = { version = "2", features = [] }
 # frontend hides the updater UI + routes "Run at startup" to the packaged
 # StartupTask instead of the registry autostart. Build with:
 #   pnpm tauri build --no-bundle --features msstore
-msstore = []
+msstore = ["dep:windows", "dep:windows-future"]
 
 [dependencies]
 tauri = { version = "2", features = ["devtools", "tray-icon", "image-png"] }
@@ -68,4 +68,15 @@ tauri-plugin-autostart = "2"
 # focuses the already-running window. Desktop only; mobile is single-instance by
 # platform. MUST be registered as the first plugin (see lib.rs).
 tauri-plugin-single-instance = "2"
+
+# WinRT StartupTask control for the Microsoft Store build (Fase 25B-2). MSIX apps
+# can't use the registry Run key, so "Run at startup" toggles the packaged
+# StartupTask instead. Only pulled in when the `msstore` feature is on; version
+# matches the one already in the Tauri dependency tree.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["ApplicationModel", "Foundation"], optional = true }
+# The `windows` facade doesn't re-export the async projection types, so depend on
+# windows-future directly to name IAsyncOperation / AsyncStatus (we block on the
+# op via the inherent Status()/GetResults() methods). Version tracks windows 0.62.
+windows-future = { version = "0.3", optional = true }
 

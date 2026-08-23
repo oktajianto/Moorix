@@ -16,7 +16,7 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
+import { isAutostartEnabled } from "./autostart";
 
 /* --------------------------- OS notifications ----------------------------- */
 

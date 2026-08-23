@@ -36,11 +36,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import {
-  enable as enableAutostart,
-  disable as disableAutostart,
-  isEnabled as isAutostartEnabled,
-} from "@tauri-apps/plugin-autostart";
+import { isAutostartEnabled, setAutostartEnabled } from "../autostart";
 import {
   HOTKEY_ACTIONS,
   bindingsFor,
@@ -517,12 +513,12 @@ function ApplicationSection() {
 
   const toggleAutostart = async (v: boolean) => {
     try {
-      if (v) await enableAutostart();
-      else await disableAutostart();
+      await setAutostartEnabled(v);
       setAutostart(v);
       void syncTrayMode();
     } catch (e) {
-      toast.show({ variant: "error", title: `Failed to change autostart: ${e}`, duration: 3000 });
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.show({ variant: "error", title: `Failed to change autostart: ${msg}`, duration: 5000 });
     }
   };
 
@@ -588,22 +584,12 @@ function ApplicationSection() {
             onChange={(v) => update({ autoUpdate: v })}
           />
         )}
-        {!storeBuild && (
-          <ToggleRow
-            title="Run at startup"
-            subtitle="Launch Moorix automatically at Windows login — so auto-backup can run on its own."
-            checked={autostart ?? false}
-            onChange={(v) => void toggleAutostart(v)}
-          />
-        )}
-        {storeBuild && (
-          <div className="py-4">
-            <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>Run at startup</div>
-            <div className="mt-0.5 text-xs" style={{ color: "var(--m-muted)" }}>
-              Manage this under Windows Settings → Apps → Startup for now. In-app control is coming.
-            </div>
-          </div>
-        )}
+        <ToggleRow
+          title="Run at startup"
+          subtitle="Launch Moorix automatically at Windows login — so auto-backup can run on its own."
+          checked={autostart ?? false}
+          onChange={(v) => void toggleAutostart(v)}
+        />
         <div className="flex items-center justify-between gap-6 py-4">
           <div className="min-w-0">
             <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>Debugging</div>
