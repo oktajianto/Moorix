@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest template for Moorix (Fase 25, Microsoft Store).
+
+  This is a TEMPLATE. scripts/pack-msix.ps1 replaces the double-brace TOKENS below
+  and writes the final AppxManifest.xml into the packaging layout. Do not edit the
+  layout copy by hand; edit this template.
+
+  Tokens (each wrapped in double braces):
+    IDENTITY_NAME      Package/Identity/Name       (from Partner Center; local default: Moorix.Dev)
+    PUBLISHER          Publisher (must match the signing cert subject, e.g. CN=...)
+    PUBLISHER_DISPLAY  Publisher display name
+    VERSION            4-part version, revision MUST be 0 (e.g. 0.1.1.0)
+
+  Notes:
+    * EntryPoint="Windows.FullTrustApplication" + rescap:runFullTrust makes this a
+      packaged Win32 (full-trust) app: it keeps full filesystem access and can spawn
+      external tools (ssh, mysqldump/mysql, pg_dump/psql), required by Fase 20/23.
+    * StartupTask is present but Enabled="false"; wiring "Run at startup" to it is
+      Fase 25B. (uap5:StartupTask takes no launch arguments, so the app must detect a
+      startup-task launch without relying on the autostart argv, handled in 25B.)
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 rescap">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Moorix</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.17763.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application
+      Id="Moorix"
+      Executable="moorix.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Moorix"
+        Description="Moorix — cross-platform terminal &amp; SSH client"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Square150x150Logo.png"
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+        <uap:SplashScreen Image="Assets\Square310x310Logo.png" BackgroundColor="transparent" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- "Run at startup" target (Fase 25B wires the toggle to enable/disable this). -->
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask
+            TaskId="MoorixAutostart"
+            Enabled="false"
+            DisplayName="Moorix" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Full-trust: keep full FS access + ability to spawn external CLI tools. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

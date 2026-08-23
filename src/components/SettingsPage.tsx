@@ -56,6 +56,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import logo from "../assets/moorix-logo.png";
 import { useToast } from "./Toast";
 import { checkForUpdates } from "../updater";
+import { isStoreBuild } from "../appFlavor";
 import {
   useSettings,
   effectiveFontFamily,
@@ -499,11 +500,16 @@ function ApplicationSection() {
   const [version, setVersion] = useState("");
   const [checking, setChecking] = useState(false);
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  // Store (MSIX) builds have no in-app updater and manage startup via the OS.
+  const [storeBuild, setStoreBuild] = useState(false);
 
   useEffect(() => {
     getVersion()
       .then(setVersion)
       .catch(() => {});
+    isStoreBuild()
+      .then(setStoreBuild)
+      .catch(() => setStoreBuild(false));
     isAutostartEnabled()
       .then(setAutostart)
       .catch(() => setAutostart(false));
@@ -546,15 +552,21 @@ function ApplicationSection() {
               </div>
             </div>
           </div>
-          <button
-            onClick={onCheck}
-            disabled={checking}
-            className="mt-4 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition hover:bg-black/10 disabled:opacity-50"
-            style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
-          >
-            <RefreshCw className={`h-4 w-4 ${checking ? "animate-spin" : ""}`} />
-            Check for updates
-          </button>
+          {storeBuild ? (
+            <div className="mt-4 text-xs" style={{ color: "var(--m-muted)" }}>
+              Updates are delivered through the Microsoft Store.
+            </div>
+          ) : (
+            <button
+              onClick={onCheck}
+              disabled={checking}
+              className="mt-4 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition hover:bg-black/10 disabled:opacity-50"
+              style={{ borderColor: "var(--m-input-border)", color: "var(--m-text)" }}
+            >
+              <RefreshCw className={`h-4 w-4 ${checking ? "animate-spin" : ""}`} />
+              Check for updates
+            </button>
+          )}
         </div>
 
         <div className="flex flex-col gap-4">
@@ -568,18 +580,30 @@ function ApplicationSection() {
         Application settings
       </h2>
       <div className="divide-y" style={{ borderColor: "var(--m-border)" }}>
-        <ToggleRow
-          title="Automatic Updates"
-          subtitle="Silently download and install updates from GitHub when available."
-          checked={settings.autoUpdate}
-          onChange={(v) => update({ autoUpdate: v })}
-        />
-        <ToggleRow
-          title="Run at startup"
-          subtitle="Launch Moorix automatically at Windows login — so auto-backup can run on its own."
-          checked={autostart ?? false}
-          onChange={(v) => void toggleAutostart(v)}
-        />
+        {!storeBuild && (
+          <ToggleRow
+            title="Automatic Updates"
+            subtitle="Silently download and install updates from GitHub when available."
+            checked={settings.autoUpdate}
+            onChange={(v) => update({ autoUpdate: v })}
+          />
+        )}
+        {!storeBuild && (
+          <ToggleRow
+            title="Run at startup"
+            subtitle="Launch Moorix automatically at Windows login — so auto-backup can run on its own."
+            checked={autostart ?? false}
+            onChange={(v) => void toggleAutostart(v)}
+          />
+        )}
+        {storeBuild && (
+          <div className="py-4">
+            <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>Run at startup</div>
+            <div className="mt-0.5 text-xs" style={{ color: "var(--m-muted)" }}>
+              Manage this under Windows Settings → Apps → Startup for now. In-app control is coming.
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-6 py-4">
           <div className="min-w-0">
             <div className="text-sm font-medium" style={{ color: "var(--m-text)" }}>Debugging</div>

@@ -32,6 +32,13 @@ fn set_tray_mode(state: tauri::State<AppState>, enabled: bool) {
     state.set_tray_mode(enabled);
 }
 
+/// Whether this is a Microsoft Store (MSIX) build (Fase 25). The frontend uses it
+/// to hide the in-app updater UI and route autostart to the packaged StartupTask.
+#[tauri::command]
+fn is_store_build() -> bool {
+    cfg!(feature = "msstore")
+}
+
 /// Title-bar minimize button: hide to tray when tray mode is on, otherwise a
 /// normal minimize (Fase 23D-2).
 #[tauri::command]
@@ -122,8 +129,14 @@ pub fn run() {
     // app stores and has no login-item concept.
     #[cfg(desktop)]
     {
+        // The GitHub self-updater is skipped in Microsoft Store builds (Fase 25):
+        // the Store delivers updates and self-updating an MSIX is disallowed. The
+        // `process` plugin stays (used by cloud-sync relaunch, not just updates).
+        #[cfg(not(feature = "msstore"))]
+        {
+            builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        }
         builder = builder
-            .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_autostart::init(
                 tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -220,6 +233,7 @@ pub fn run() {
             set_backup_activity,
             set_tray_mode,
             window_minimize,
+            is_store_build,
         ])
         .on_window_event(|window, event| {
             // Tray mode (Fase 23D-2): closing the window hides it to the tray

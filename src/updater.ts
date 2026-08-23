@@ -2,6 +2,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { platform } from "@tauri-apps/plugin-os";
 import type { ToastApi } from "./components/Toast";
+import { isStoreBuild } from "./appFlavor";
 
 function isDesktop(): boolean {
   try {
@@ -31,6 +32,9 @@ export async function checkForUpdates(
   opts: { silent?: boolean } = {},
 ): Promise<void> {
   if (!isDesktop()) return;
+  // Microsoft Store builds (Fase 25) get updates via the Store; the in-app
+  // GitHub updater plugin isn't registered, so never attempt a check.
+  if (await isStoreBuild()) return;
 
   const checkingId = opts.silent
     ? undefined

@@ -349,6 +349,7 @@ Moorix/
 | Platform | Perintah | Artefak | Catatan |
 |---|---|---|---|
 | Windows | `tauri build` | `.msi` / `.exe` | code signing opsional |
+| Windows (Store) | `makeappx pack` (paska build) | `.msix` | distribusi via **Microsoft Store** → bebas SmartScreen. Detail: **Fase 25 (§25)** |
 | Linux | `tauri build` | `.deb` / `.AppImage` / `.rpm` | |
 | macOS | `tauri build` | `.dmg` / `.app` | notarization utk distribusi |
 | Android | `tauri android build` | `.apk` / `.aab` | butuh Android SDK + NDK; distribusi F-Droid/sideload aman utk fitur lanjutan |
@@ -1339,3 +1340,103 @@ type Note = {
 - Menu di **dalam Settings** (sesuai permintaan); pintu cepat dari luar Settings = pertimbangan nanti.
 
 **Status:** rancangan disetujui (diskusi 2026-08-07). Implementasi belum mulai.
+
+---
+
+## 25. Distribusi Microsoft Store (MSIX) — **Fase 25** · ⬜ RANCANGAN (keputusan user 2026-08-23)
+
+> Branch kerja: **`ms-store`**. Tujuan: publish Moorix ke Microsoft Store sebagai paket **MSIX** supaya installer **tidak lagi kena SmartScreen / Smart App Control**.
+
+### 25.0 Tujuan
+- Hilangkan peringatan **SmartScreen** ("Windows protected your PC") & blokir **Smart App Control** yang sekarang muncul di installer NSIS (`.exe`) karena belum ter-sign / belum punya reputasi.
+- **Kenapa lewat Store menyelesaikan ini:** app yang di-install dari Microsoft Store dipercaya oleh Windows — reputasi datang dari Store, **bukan** dari sertifikat EV. Jadi **tidak perlu beli EV code-signing certificate** (biaya ~$300–600/th) hanya untuk lewat Store.
+
+### 25.1 Keputusan terkunci ✅ (diskusi user 2026-08-23)
+- **Jalur:** MSIX (paket `.msix`), bukan submit EXE/MSI unpackaged.
+- **Akun:** Microsoft Partner Center **sudah ada** → tinggal reserve nama app + ambil identitas paket.
+- **Distribusi eksisting tetap jalan:** NSIS `.exe` + GitHub Releases **tidak dihapus**. Build Store adalah **varian tambahan**, bukan pengganti. (User yang download langsung tetap dilayani jalur lama; Store jadi jalur "aman & mudah".)
+
+### 25.2 Kendala inti: Tauri v2 tidak produksi MSIX secara native
+Bundler Tauri (`targets`) hanya punya `nsis`/`msi`/`app` untuk Windows — **tidak ada target `msix`**. Jadi MSIX dibuat **paska-build** dengan langkah manual yang direproduksi lewat skrip:
+1. `tauri build` (target `app`/`nsis`) → dapat `Moorix.exe` + sidecar/resource di `src-tauri/target/release/`.
+2. Susun **layout** paket (folder berisi exe + aset + `AppxManifest.xml`).
+3. `makeappx.exe pack` (dari Windows SDK) → hasil `.msix`.
+4. (Uji lokal saja) `signtool` dgn sertifikat self-signed yang **Publisher-nya == manifest** → install & tes. **Untuk submit ke Store TIDAK perlu sign sendiri** — Store yang menandatangani.
+
+> Ini adalah paket **"packaged Win32 desktop app"** (full-trust), bukan UWP. Aplikasi tetap Win32 penuh, cuma dibungkus MSIX.
+
+### 25.3 Identitas paket dari Partner Center (langkah pertama, sebelum ngoding)
+Di Partner Center → reserve app name "Moorix", lalu **Product → Product identity** catat:
+- **Package/Identity/Name** (mis. `12345Publisher.Moorix`)
+- **Publisher** (mis. `CN=ABCD1234-...`)  ← wajib **persis** di manifest
+- **Publisher display name**
+- **Package Family Name (PFN)**
+
+Nilai-nilai ini masuk ke `AppxManifest.xml` (§25.6). Salah satu huruf beda → sertifikasi Store gagal.
+
+### 25.4 Perubahan WAJIB pada kode/konfig untuk build Store
+Build Store harus dibedakan dari build biasa (via **Cargo feature** mis. `msstore`, atau env `MOORIX_STORE=1`). Yang berubah:
+
+1. **Matikan in-app updater** — Store yang meng-update app. Updater Tauri yang self-download **dilarang** di app Store & bakal gagal (MSIX read-only). → di build Store: jangan register `tauri_plugin_updater`, dan sembunyikan UI "Check for updates". (`createUpdaterArtifacts` tetap boleh untuk jalur non-Store.)
+2. **Autostart** — plugin autostart nulis ke registry `Run` key; di MSIX itu **tervirtualisasi/diblok**. Ganti dengan **`StartupTask` extension** di manifest (§25.6). Fitur "Run at startup" (Fase 23D) harus dites ulang: di build Store toggle-nya mengaktifkan StartupTask, bukan registry.
+3. **Capability `runFullTrust`** (`rescap`) — **wajib**, supaya app tetap punya akses FS penuh & bisa spawn proses eksternal (`ssh`, `mysqldump`/`mysql`, `pg_dump`/`psql`, tulis backup ke folder pilihan user di Fase 23). Tanpa ini backup & DB export/import mati.
+4. **Versi 4-part, revisi = 0** — MSIX butuh `Major.Minor.Build.Revision` dan Store mensyaratkan **revisi (part ke-4) = 0**. `0.1.1` → `0.1.1.0`. **Pertimbangkan bump ke `1.0.0.0`** (Store lebih ramah versi ≥ 1.0; sekaligus menandai "rilis publik").
+5. **Single-instance guard** (sudah ada) — perlu diuji di sandbox MSIX (identitas paket beda; named-mutex biasanya tetap jalan, tapi verifikasi).
+6. **Tray + hide-to-tray + `--autostart` arg** (Fase 23D) — StartupTask bisa kirim argumen; pastikan app tetap start-hidden saat dinyalakan oleh StartupTask.
+
+### 25.5 `AppxManifest.xml` (template — disimpan di `src-tauri/msix/AppxManifest.xml`)
+Elemen kunci:
+- `<Identity Name="… (dari Partner Center)" Publisher="CN=…" Version="1.0.0.0" ProcessorArchitecture="x64"/>`
+- `<Properties>`: `DisplayName`, `PublisherDisplayName`, `Logo`.
+- `<Dependencies>`: `TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0"` (sesuaikan).
+- `<Applications><Application Id="Moorix" Executable="Moorix.exe" EntryPoint="Windows.FullTrustApplication">`
+  - `<uap:VisualElements …>` (nama, ikon, warna latar, tile).
+  - **StartupTask**: `<uap5:Extension Category="windows.startupTask"><uap5:StartupTask TaskId="MoorixAutostart" Enabled="false" DisplayName="Moorix"/></uap5:Extension>` (+ argumen `--autostart` bila didukung).
+  - (Opsional) protocol handler bila mau deep-link.
+- `<Capabilities>`: `<rescap:Capability Name="runFullTrust"/>` (+ namespace `rescap`/`uap5` di root).
+
+### 25.6 Aset visual MSIX (dari `icon-source.png`)
+Store butuh set aset khusus (beda dari `.ico`): `Square44x44Logo`, `Square150x150Logo`, `Wide310x150Logo` (opsional), `StoreLogo` (50x50), `Square71x71`, splash/tile + versi scale (100/125/150/200/400) & **target-size** (16/24/32/48/256) untuk taskbar/Explorer. Generate sekali (script) ke `src-tauri/msix/Assets/`.
+
+### 25.7 Skrip packaging (`scripts/pack-msix.ps1`)
+Langkah yang diotomasi:
+1. `pnpm tauri build --features msstore` (atau env flag) → `Moorix.exe`.
+2. Copy exe + `Assets/` + `AppxManifest.xml` (dengan versi di-inject) ke folder layout `target/msix/layout/`.
+3. `makeappx pack /d layout /p Moorix.msix /o`.
+4. (uji lokal) buat cert self-signed `New-SelfSignedCertificate` Publisher==manifest → `signtool sign` → `Add-AppxPackage`.
+Deteksi path Windows SDK (`makeappx.exe`, `signtool.exe`) via `Get-ChildItem` di `C:\Program Files (x86)\Windows Kits\10\bin\*\x64\`.
+
+### 25.8 Uji lokal (sebelum submit) — checklist
+- Install `.msix` (self-signed) → **tidak ada SmartScreen** saat dijalankan dari paket.
+- Window utama tampil; title bar custom (decorations:false) OK.
+- **Secret storage** (vault/kredensial) baca-tulis OK di sandbox MSIX.
+- **Autostart** via StartupTask → reboot → app start hidden di tray.
+- **Backup DB** (Fase 23) nulis file ke folder tujuan (butuh `runFullTrust`).
+- **Spawn tool**: SSH connect, `mysqldump`/`pg_dump` export & import jalan.
+- **Tray**: hide-to-tray + close-to-tray OK.
+- **Updater**: pastikan UI update tersembunyi / tak ada percobaan self-update.
+
+### 25.9 Submit ke Partner Center
+1. Buat submission baru → upload `Moorix.msix` (**unsigned** — Store yang sign).
+2. Isi listing: deskripsi, screenshot, kategori (Developer tools), rating (IARC), privacy policy URL.
+3. Kirim untuk sertifikasi → tunggu review. Jika lolos → live di Store, **SmartScreen hilang** untuk semua yang install via Store.
+
+### 25.10 Pentahapan (tiap fase berdiri sendiri & bisa diuji)
+- **25A ✅ (2026-08-23)** — Packaging lokal jalan. Dibuat: `src-tauri/msix/AppxManifest.template.xml` (full-trust + `runFullTrust` + StartupTask, token identitas/versi diinject), `scripts/pack-msix.ps1` (build `--no-bundle` → susun layout → `makeappx pack` → opsi self-sign+install), `src-tauri/msix/README.md`. `.gitignore`: abaikan `*.pfx`/`*.cer`/`*.msix`. **Terverifikasi:** `pack-msix.ps1 -SkipBuild` → `makeappx` memvalidasi manifest & menghasilkan `Moorix-0.1.1.0.msix` (~12,66 MB) di `src-tauri/target/msix/`. Catatan implementasi: (a) komentar XML tak boleh memuat `--` (mis. `--autostart`) → di-reword; (b) template dibaca UTF-8 & manifest ditulis UTF-8-no-BOM agar tak mojibake di PS 5.1. *Belum sentuh updater/autostart (→ 25B).* Uji install butuh trust cert self-signed (admin) — belum dijalankan di sini.
+- **25B — Penyesuaian build Store.** Feature flag `msstore`: matikan updater, capability `runFullTrust` (sudah di manifest 25A), autostart → StartupTask, versi 4-part.
+  - **25B-1 ✅ (2026-08-23)** — Feature `msstore` di `Cargo.toml`. `lib.rs`: plugin `tauri_plugin_updater` **tidak diregister** saat `feature = "msstore"` (plugin `process` tetap — dipakai relaunch cloud-sync, bukan cuma updater); command baru `is_store_build() -> cfg!(feature="msstore")`. Frontend: `src/appFlavor.ts` (`isStoreBuild()`, cached); `updater.ts` early-return bila store build (mencakup auto-check startup + tombol manual); `SettingsPage.tsx` menyembunyikan tombol "Check for updates" + toggle "Automatic Updates" + toggle "Run at startup" saat store build (diganti hint sementara → StartupTask di 25B-2). `pack-msix.ps1` build dengan `--features msstore`. Versi 4-part sudah dari pack script (25A). **Verifikasi:** `tsc` lolos; `cargo check` **dan** `cargo check --features msstore` lolos (hanya 4 warning lama); build release `--features msstore` + `makeappx pack` → MSIX baru sukses.
+  - **25B-2 ⬜** — Autostart via **StartupTask** (WinRT `windows` crate: `StartupTask::GetAsync`/`RequestEnableAsync`/`Disable`). Command Rust `startup_task_*` (hati-hati: `generate_handler!` dibagi dengan build Android → gate per-target). Wrapper frontend `autostart.ts` yang me-route ke plugin (non-store) atau command StartupTask (store); pakai di `SettingsPage.tsx` toggle + `backupDb.ts` `syncTrayMode`. Kembalikan toggle "Run at startup" untuk store build.
+- **25C — Uji native menyeluruh** (checklist §25.8) di mesin user. Pakai identitas asli dari Partner Center (§25.3).
+- **25D — Submit & sertifikasi** (§25.9). Setelah live: dokumentasikan alur "update rilis Store" (build → pack → new submission).
+
+### 25.11 Risiko & mitigasi
+| Risiko | Mitigasi |
+|---|---|
+| Publisher/Identity manifest ≠ Partner Center | Ambil nilai persis dari Product Identity; inject saat pack, jangan hardcode salah |
+| Updater self-download aktif di build Store → reject/crash | Feature flag `msstore` menonaktifkan plugin updater + UI-nya |
+| Autostart via registry tak jalan di MSIX | Pindah ke `StartupTask` extension; uji reboot |
+| Backup/DB tool gagal karena sandbox | `runFullTrust` capability; uji spawn `ssh`/`mysqldump`/`pg_dump` |
+| Versi ditolak (revisi ≠ 0 / < aturan Store) | Skema `Major.Minor.Build.0`; pertimbangkan mulai `1.0.0.0` |
+| Tauri update masa depan mengubah nama/letak exe | Skrip pack deteksi exe dari `target/release`, tidak hardcode |
+
+**Status:** **25A ✅ + 25B-1 ✅** (2026-08-23, branch `ms-store`) — pipeline MSIX + build variant `msstore` (updater dimatikan, UI updater disembunyikan). Sisa: **25B-2** (autostart→StartupTask), lalu **25C** (uji native dgn identitas Partner Center) & **25D** (submit).

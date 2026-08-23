@@ -23,6 +23,11 @@ updater-signing.key
 *.updater.key
 TAURI_SIGNING_PRIVATE_KEY*
 
+# MSIX test signing (Fase 25) — self-signed cert artifacts, never commit
+*.pfx
+*.cer
+*.msix
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
