@@ -52,6 +52,7 @@ import {
   serialOpen,
   telnetOpen,
   sshOpenFromProfile,
+  keyPassphraseId,
   termOptionsOf,
   setLocalShellDefaults,
   type Profile,
@@ -329,13 +330,16 @@ function App() {
   const saveProfile = (p: UserProfile) => {
     // Never persist the plaintext password in the store — put it in the OS keychain.
     const password = p.ssh.password;
+    // The key passphrase is a secret too: keychain-backed (keyed distinctly from
+    // the password) and stripped from the stored profile, so it is never synced.
+    const keyPassphrase = p.ssh.keyPassphrase;
     // DB child passwords are vault-backed too (keyed by each DB profile id) and
     // stripped from the stored profile, same as the SSH password.
     const dbs = p.databases ?? [];
     const storedDbs = dbs.map((d) => ({ ...d, password: "" }));
     const stored: UserProfile = {
       ...p,
-      ssh: { ...p.ssh, password: "" },
+      ssh: { ...p.ssh, password: "", keyPassphrase: "" },
       databases: storedDbs,
     };
     const exists = userProfiles.some((x) => x.id === p.id);
@@ -347,6 +351,10 @@ function App() {
     if (password) {
       void secretSet(p.id, password).catch(() => {});
     }
+    // Only write when a new passphrase was typed; blank keeps the existing entry.
+    if (keyPassphrase) {
+      void secretSet(keyPassphraseId(p.id), keyPassphrase).catch(() => {});
+    }
     for (const d of dbs) {
       // Only write when a new password was typed; blank keeps the vault entry.
       if (d.password) void secretSet(d.id, d.password).catch(() => {});
@@ -357,6 +365,7 @@ function App() {
     const gone = userProfiles.find((x) => x.id === id);
     persistProfiles(userProfiles.filter((x) => x.id !== id));
     void secretDelete(id).catch(() => {});
+    void secretDelete(keyPassphraseId(id)).catch(() => {});
     for (const d of gone?.databases ?? []) {
       void secretDelete(d.id).catch(() => {});
     }

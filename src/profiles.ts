@@ -140,6 +140,9 @@ export type SshOptions = {
   authMethod: SshAuthMethod;
   password: string;
   keyPath: string;
+  /** Passphrase for an encrypted private key. Like `password`, this is moved to
+   *  the OS keychain on save (kept blank in the store) and never synced. */
+  keyPassphrase: string;
   ports: PortForward[];
   advanced: SshAdvanced;
   ciphers: SshCiphers;
@@ -220,6 +223,7 @@ export function defaultSshOptions(): SshOptions {
     authMethod: "auto",
     password: "",
     keyPath: "",
+    keyPassphrase: "",
     ports: [],
     advanced: {
       x11: false,
@@ -335,6 +339,11 @@ export function iconByName(name: string): LucideIcon {
   return PROFILE_ICONS.find((i) => i.name === name)?.Icon ?? Server;
 }
 
+/** Keychain id under which a profile's key passphrase is stored. Distinct from
+ *  the profile id (which holds the login password) so the two never collide. */
+export const keyPassphraseId = (profileId: string): string =>
+  `${profileId}#keyPassphrase`;
+
 /** Build an OpenSession that connects an SSH user profile. The password is
  *  fetched from the OS keychain at connect time (never persisted in the store). */
 export function sshOpenFromProfile(p: UserProfile): OpenSession {
@@ -342,7 +351,9 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
   return async (channel: Channel<number[]>, cols, rows) => {
     let auth: Record<string, unknown>;
     if (s.authMethod === "key" && s.keyPath) {
-      auth = { type: "key", path: s.keyPath, passphrase: null };
+      const passphrase =
+        (await secretGet(keyPassphraseId(p.id)).catch(() => null)) || null;
+      auth = { type: "key", path: s.keyPath, passphrase };
     } else {
       const stored = await secretGet(p.id).catch(() => null);
       auth = { type: "password", password: stored ?? s.password ?? "" };
@@ -362,7 +373,12 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
           username: jhProfile.ssh.username,
           // simplify auth for jump host for now
           auth: jhProfile.ssh.authMethod === "key"
-            ? { type: "key", path: jhProfile.ssh.keyPath, passphrase: null }
+            ? {
+                type: "key",
+                path: jhProfile.ssh.keyPath,
+                passphrase:
+                  (await secretGet(keyPassphraseId(jhProfile.id)).catch(() => null)) || null,
+              }
             : { type: "password", password: (await secretGet(jhProfile.id).catch(() => null)) ?? jhProfile.ssh.password ?? "" },
         };
       }

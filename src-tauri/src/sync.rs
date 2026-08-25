@@ -41,12 +41,26 @@ pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
 
     // Strip per-device keys (Google session, auto-backup config/markers) from the
     // synced payload so a pull on another machine never overwrites (or leaks) them.
+    // Also blank each profile's `ssh.keyPath`: a private key is a per-device secret
+    // (Fase 26 — user 2026-08-26), so only the profile syncs. The key passphrase is
+    // already local-only because it lives in the keychain under a "#keyPassphrase"
+    // id that the secret-gathering below never collects.
     if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&store_json) {
         if let Some(obj) = parsed.as_object_mut() {
             let mut changed = false;
             for key in LOCAL_ONLY_KEYS {
                 if obj.remove(key).is_some() {
                     changed = true;
+                }
+            }
+            if let Some(profiles) = obj.get_mut("userProfiles").and_then(|p| p.as_array_mut()) {
+                for p in profiles {
+                    if let Some(kp) = p.get_mut("ssh").and_then(|s| s.get_mut("keyPath")) {
+                        if kp.as_str().map(|v| !v.is_empty()).unwrap_or(false) {
+                            *kp = serde_json::Value::String(String::new());
+                            changed = true;
+                        }
+                    }
                 }
             }
             if changed {
@@ -94,6 +108,49 @@ pub fn get_sync_payload(app: &AppHandle) -> Result<String, String> {
     serde_json::to_string(&payload).map_err(|e| e.to_string())
 }
 
+/// Build a `profile id -> non-empty keyPath` map from the local `userProfiles`.
+fn local_key_path_map(local: Option<serde_json::Value>) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Some(arr) = local.as_ref().and_then(|v| v.as_array()) {
+        for p in arr {
+            let id = p.get("id").and_then(|v| v.as_str());
+            let kp = p
+                .get("ssh")
+                .and_then(|s| s.get("keyPath"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty());
+            if let (Some(id), Some(kp)) = (id, kp) {
+                map.insert(id.to_string(), kp.to_string());
+            }
+        }
+    }
+    map
+}
+
+/// Re-inject the local keyPath into each incoming profile whose id we already
+/// have, so a pull never wipes this device's private-key binding (§26.10).
+fn with_local_key_paths(
+    mut incoming: serde_json::Value,
+    local_key_paths: &HashMap<String, String>,
+) -> serde_json::Value {
+    if let Some(arr) = incoming.as_array_mut() {
+        for p in arr.iter_mut() {
+            let id = p.get("id").and_then(|v| v.as_str()).map(String::from);
+            if let Some(id) = id {
+                if let Some(kp) = local_key_paths.get(&id) {
+                    if let Some(ssh) = p.get_mut("ssh").and_then(|s| s.as_object_mut()) {
+                        ssh.insert(
+                            "keyPath".to_string(),
+                            serde_json::Value::String(kp.clone()),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    incoming
+}
+
 pub fn apply_sync_payload(app: &AppHandle, payload_json: &str) -> Result<(), String> {
     let payload: SyncPayload = serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
     let incoming: serde_json::Value =
@@ -106,12 +163,22 @@ pub fn apply_sync_payload(app: &AppHandle, payload_json: &str) -> Result<(), Str
     // stripped from the payload, but skip them here too as belt-and-suspenders so
     // an older payload can't overwrite this device's sign-in or backup setup.
     let store = app.store("moorix.json").map_err(|e| e.to_string())?;
+    // Snapshot this device's keyPath per profile id BEFORE applying the import.
+    // Private keys never travel in the payload (get_sync_payload blanks
+    // `ssh.keyPath`), so we re-apply the local keyPath for profiles this machine
+    // already has. A profile that only exists remotely arrives with an empty
+    // keyPath — the user points it at a key here (Fase 26 §26.10).
+    let local_key_paths = local_key_path_map(store.get("userProfiles"));
     if let Some(obj) = incoming.as_object() {
         for (key, value) in obj {
             if LOCAL_ONLY_KEYS.contains(&key.as_str()) {
                 continue;
             }
-            store.set(key.clone(), value.clone());
+            if key == "userProfiles" {
+                store.set(key.clone(), with_local_key_paths(value.clone(), &local_key_paths));
+            } else {
+                store.set(key.clone(), value.clone());
+            }
         }
     }
     store.save().map_err(|e| e.to_string())?;

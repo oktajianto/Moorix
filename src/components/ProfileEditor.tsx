@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   Lightbulb,
   AtSign,
@@ -11,6 +12,7 @@ import {
   ArrowRight,
   Database,
   Pencil,
+  FolderOpen,
 } from "lucide-react";
 import {
   CIPHER_OPTIONS,
@@ -363,7 +365,7 @@ function GeneralTab({
             onChange={(e) => setSsh({ password: e.target.value })}
           />
           <p className="mt-1 text-[11px]" style={{ color: "var(--m-muted)" }}>
-            🔒 Disimpan di OS keychain (terenkripsi). Kosongkan bila tidak ingin mengubah.
+            🔒 Stored in the OS keychain (encrypted). Leave blank to keep it unchanged.
           </p>
         </div>
       )}
@@ -371,17 +373,61 @@ function GeneralTab({
       {(s.authMethod === "key" || s.authMethod === "auto") && (
         <div className="max-w-md">
           <Label>Private key path</Label>
-          <input
-            className={`${inputCls} w-full`}
-            style={inputStyle}
-            value={s.keyPath}
-            onChange={(e) => setSsh({ keyPath: e.target.value })}
-            placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
-          />
+          <div className="flex gap-2">
+            <input
+              className={`${inputCls} w-full`}
+              style={inputStyle}
+              value={s.keyPath}
+              onChange={(e) => setSsh({ keyPath: e.target.value })}
+              placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
+            />
+            <button
+              type="button"
+              onClick={pickKeyFile}
+              className="flex shrink-0 items-center gap-1 rounded px-2 text-xs"
+              style={{
+                border: "1px solid var(--m-border)",
+                color: "var(--m-text)",
+              }}
+              title="Browse for a private key file"
+            >
+              <FolderOpen size={14} /> Browse
+            </button>
+          </div>
+          <p className="mt-1 text-[11px]" style={{ color: "var(--m-muted)" }}>
+            🔒 The key stays on this device — only the profile syncs, so you set
+            the key up again on other computers.
+          </p>
+
+          <div className="mt-3">
+            <Label>Key passphrase (if encrypted)</Label>
+            <input
+              type="password"
+              className={`${inputCls} w-full`}
+              style={inputStyle}
+              value={s.keyPassphrase ?? ""}
+              onChange={(e) => setSsh({ keyPassphrase: e.target.value })}
+              placeholder="Leave blank for a key without a passphrase"
+            />
+            <p className="mt-1 text-[11px]" style={{ color: "var(--m-muted)" }}>
+              🔒 Stored in the OS keychain (encrypted), never synced. Leave blank
+              to keep it unchanged.
+            </p>
+          </div>
         </div>
       )}
     </div>
   );
+
+  async function pickKeyFile() {
+    const picked = await openDialog({
+      multiple: false,
+      directory: false,
+      title: "Select private key",
+      defaultPath: s.keyPath || undefined,
+    });
+    if (typeof picked === "string") setSsh({ keyPath: picked });
+  }
 }
 
 function PortsTab({
