@@ -78,6 +78,7 @@ Status dokumen: **Draft v1** · Terakhir diperbarui: 2026-08-13 · **Rilis publi
 - **Terminal**: ligatures **live** (kini hanya terminal baru), renderer switch **live** (kini saat create). ~~Search (Ctrl+F)~~ ✅ **SELESAI** (Fase 21 — implementasi; uji native pending).
 - **Restore tabs**: pulihkan **layout split** (kini single-pane), dan urutan/tab aktif.
 - **SSH advanced (lanjutan Fase 9)**: **Remote (-R)** forwarding, **X11/agent forwarding**, skip banner, **reuse session** (multiplexing), **jump host**.
+- **Autentikasi SSH pakai Key + Generate Key (Fase 26)** — ⬜ **RANCANGAN** (§26, diskusi user 2026-08-25): (A) pakai private key yang sudah ada — Browse file + dukung passphrase (keychain); (B) generate keypair (Ed25519/RSA) langsung dari app + tampil/copy public key + (opsional) install ke server ala `ssh-copy-id`. Backend key-auth **sudah ada** (`ssh.rs` `SshAuth::Key`); yang kurang = UI (Browse/passphrase/generator). Branch kerja `koneksiSSH-withSSHKey`.
 - **Profile editor** untuk **Serial/Telnet** (§17) — kini hanya SSH.
 - **Mobile**: hadirkan file manager/fitur desktop-only ke mobile bila diinginkan (FS sandbox).
 
@@ -1455,3 +1456,121 @@ Deteksi path Windows SDK (`makeappx.exe`, `signtool.exe`) via `Get-ChildItem` di
 | Tauri update masa depan mengubah nama/letak exe | Skrip pack deteksi exe dari `target/release`, tidak hardcode |
 
 **Status:** **✅ FASE 25 SELESAI — Moorix LIVE di Microsoft Store** (accepted 2026-08-25). Store id `9PFM3C4LWS8B` → https://apps.microsoft.com/detail/9PFM3C4LWS8B. 25A pipeline MSIX · 25B build variant `msstore` (updater mati, autostart StartupTask, start-hidden) · 25C identitas Partner Center + fix ikon (unplated + white plate) · 25D submit → **accepted & live**. Branch `ms-store` di-merge ke `main` (2026-08-25). README punya blok Download (Store utama). Distribusi: MSIX = Store-only; NSIS `.exe` tetap di GitHub Releases (kena SmartScreen kecuali di-sign). Sisa opsional: ARM64, sertifikat code-signing untuk sideload/`.exe`.
+
+---
+
+## 26. Autentikasi SSH pakai Key + Generate Key — **Fase 26** · ⬜ RANCANGAN (diskusi user 2026-08-25)
+
+> Branch kerja: **`koneksiSSH-withSSHKey`**. Tujuan: koneksi SSH tak lagi hanya username+password — bisa pakai **private key** (yang user generate sendiri), **dan** Moorix bisa **men-generate keypair baru** langsung dari app lalu memandu memasang public key ke server.
+
+### 26.0 Tujuan
+Dua kemampuan yang saling melengkapi:
+- **A — Pakai key yang sudah ada** (user sudah `ssh-keygen` di komputernya): pilih file private key lewat **Browse** (bukan ketik path manual), dukung **key ber-passphrase**, kredensial passphrase disimpan aman di OS keychain (opsional).
+- **B — Generate keypair di dalam app**: tombol **Generate key…** → pilih algoritma (Ed25519 default / RSA), passphrase opsional, komentar, lokasi simpan → app buat `id_*` + `id_*.pub`, set profil ke key itu, lalu **tampilkan public key + Copy** dengan panduan pasang ke `~/.ssh/authorized_keys` server. (Stretch: pasang otomatis ala `ssh-copy-id` lewat sesi password yang masih aktif.)
+
+### 26.1 Temuan kode (apa yang SUDAH ada) ✅
+Backend key-auth **sudah jalan**, cuma UI/kelengkapannya kurang:
+- **`src-tauri/src/ssh.rs`** — enum `SshAuth::Key { path, passphrase }` (`ssh.rs:68`); saat connect: `load_secret_key(path, passphrase.as_deref())` → `authenticate_publickey(...)` (`ssh.rs:174`). Passphrase **sudah didukung di level backend**, tinggal frontend mengirimkannya.
+- **`src/profiles.ts`** — `SshAuthMethod = "auto"|"password"|"key"|"agent"|"interactive"` (`profiles.ts:101`); `SshOptions` punya `authMethod`, `password`, `keyPath` (`profiles.ts:136`). `sshOpenFromProfile` mengirim `{ type:"key", path:s.keyPath, passphrase:null }` saat `authMethod==="key" && keyPath` (`profiles.ts:344`) — **passphrase di-hardcode `null`**. Jump host juga (`profiles.ts:365`).
+- **`src/components/ProfileEditor.tsx`** — tombol metode auth (`AUTH_METHODS`, `ProfileEditor.tsx:285`); saat `key`/`auto` muncul input teks **"Private key path"** (`ProfileEditor.tsx:371`) — **belum ada Browse, belum ada field passphrase**.
+- **`tauri-plugin-dialog`** sudah terpasang sejak Fase 23A-2 (folder picker) → **file picker key tinggal reuse** (`open({ multiple:false })`).
+- **Secret storage** siap pakai: `src/secrets.ts` (`secretGet`/`secretSet`/`secretDelete`, keyed by id, lewat vault/keychain) + `src-tauri/src/secrets.rs` (`keyring` OS).
+
+**Kesenjangan yang ditutup Fase 26:** (1) Browse file key · (2) input + penyimpanan passphrase · (3) kirim passphrase ke backend (buang `null` hardcode) · (4) generator keypair in-app + tampil public key. **`agent`/`interactive`** tetap **di luar scope** fase ini (enum backend belum punya varian-nya; catat sebagai lanjutan).
+
+### 26.2 Keputusan desain — Part A (pakai key existing)
+1. **Browse file** — tombol di sebelah input "Private key path" → `open({ multiple:false, title:"Select private key" })`. Tanpa filter ekstensi ketat (key sering tanpa ekstensi: `id_ed25519`, `id_rsa`) — filter opsional "All files". Hasil path → `setSsh({ keyPath })`. Input manual tetap boleh (path ketik/paste masih jalan).
+2. **Passphrase** — checkbox **"Key has a passphrase"**; saat aktif muncul input password. **Penyimpanan:** di OS keychain, **key terpisah dari password** profil, mis. id `"<profileId>#keyPassphrase"` (reuse `secretSet`/`secretGet`) — **tidak** ditulis ke `moorix.json`. Kosong = key tanpa passphrase (kirim `passphrase: null`).
+3. **Kirim ke backend** — `sshOpenFromProfile`: bila `authMethod` key/auto & `keyPath` → `passphrase = (await secretGet("<id>#keyPassphrase")) ?? null`, kirim di objek auth. Sama untuk **jump host** (`profiles.ts:365`).
+4. **Key TIDAK tersimpan di akun/cloud — hanya profil yang tersync** ✅ (keputusan user 2026-08-26). Private key adalah **file lokal**; **`keyPath` dan passphrase key TIDAK ikut sync** ke akun (Google Drive). Yang tersync hanya metadata profil (host/port/username/nama/`authMethod`/dll). Efek: login akun sama di **komputer lain** (atau install ulang) → profil muncul, tapi **binding key kosong** → user **setup ulang** key (Browse existing / Generate baru). Detail penyimpanan & mekanisme strip di **§26.10**.
+5. **Auto** — biarkan perilaku sekarang (ada `keyPath` → coba key, else password). Multi-method fallback (coba publickey lalu password lalu keyboard-interactive dalam satu koneksi) = **lanjutan opsional**, bukan fase ini.
+
+### 26.3 Keputusan desain — Part B (generate keypair)
+1. **Pemicu UI** — tombol **"Generate key…"** di section key ProfileEditor → modal `GenerateKeyModal`.
+2. **Field modal:**
+   - **Type**: `Ed25519` (default, direkomendasikan) · `RSA` (pilih **2048/3072/4096**, default 3072). *(ECDSA di-skip; Ed25519 sudah cukup & modern.)*
+   - **Passphrase** (opsional) + **konfirmasi** (mismatch → error). Kosong = key tanpa passphrase.
+   - **Comment** — default `moorix:<profileName>` atau `<username>@<host>`.
+   - **Save to** — default folder `~/.ssh/` (buat bila belum ada) nama `id_ed25519`/`id_rsa`; bisa diubah via dialog. **Cek overwrite** (tolak/timpa dengan konfirmasi).
+3. **Hasil** — setelah generate:
+   - Tulis **private key** (format OpenSSH; **chmod 600** di unix) + **`<path>.pub`**.
+   - Set profil: `keyPath = <path>`, `authMethod = "key"`; bila ada passphrase → simpan ke keychain (§26.2 poin 2).
+   - Modal beralih ke tampilan **"Key created"**: tampilkan **public key** (satu baris `authorized_keys`) + tombol **Copy** + instruksi ringkas ("Add this line to `~/.ssh/authorized_keys` on the server"). Tampilkan juga path privat/publik.
+4. **Stretch (26C) — Install ke server otomatis** (ala `ssh-copy-id`): bila profil masih punya **password** yang valid, tawarkan tombol **"Install to server now"** → buka sesi via password → `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo <pub> >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys` (idempotent: cek duplikat dulu). Sukses → user bisa langsung ganti ke auth key. *(Butuh koneksi password aktif; kalau tak ada, fallback ke instruksi copy manual.)*
+
+### 26.4 Backend (Rust)
+- **`ssh.rs` — tidak berubah** untuk Part A (passphrase sudah didukung; frontend cukup berhenti mengirim `null`).
+- **Command baru `ssh_generate_keypair`** (Part B), mis. di modul baru `src-tauri/src/keygen.rs` (atau di `ssh.rs`):
+  - Input: `{ algo: "ed25519"|"rsa", bits?: u32, passphrase?: String, comment?: String, out_path: String }`.
+  - Pakai **`ssh-key`** (crate yang sudah ditarik `russh::keys`): `PrivateKey::random(&mut OsRng, Algorithm::Ed25519)` / RSA `Algorithm::Rsa { .. }` (atau `RsaKeypair::random`), set `comment`, `encrypt(&mut OsRng, passphrase)` bila ada → `to_openssh(LineEnding::LF)` untuk privat; `public_key().to_openssh()` untuk `.pub`.
+  - Tulis file (buat folder induk bila perlu); **unix: set permission 0600** privat / 0644 publik (`std::os::unix::fs::PermissionsExt`, `cfg(unix)`). Windows: andalkan ACL default profil user.
+  - Return `{ private_path, public_path, public_openssh }`.
+- **(26C) command `ssh_install_pubkey`** (opsional): terima config koneksi (password) + baris public key → jalankan perintah append idempotent di server, return sukses/gagal. Bisa reuse jalur channel exec yang sudah ada.
+
+### 26.5 Frontend
+- **`ProfileEditor.tsx`** (section key, `ProfileEditor.tsx:371`):
+  - Tambah tombol **Browse** (ikon `FolderOpen`) di kanan input path → `open({multiple:false})`.
+  - Tambah **checkbox passphrase** + input (baca/tulis keychain via `secrets.ts`; jangan taruh di `setSsh`).
+  - Tambah tombol **Generate key…** → buka `GenerateKeyModal`.
+- **Baru `src/components/GenerateKeyModal.tsx`** — form §26.3 → panggil `invoke("ssh_generate_keypair", …)` → tampilan hasil (public key + Copy) → set profil (`keyPath`/`authMethod`) + simpan passphrase → (26C) tombol Install to server.
+- **`profiles.ts`** — `sshOpenFromProfile`: ambil passphrase dari keychain, kirim di auth (utama **dan** jump host); hapus `passphrase: null` hardcode (`profiles.ts:344` & `:365`).
+- **`src/secrets.ts`** — reuse; helper opsional `keyPassphraseId(profileId)` biar konsisten.
+- **Keamanan UI** — passphrase input `type=password`, tak pernah dilog; public key aman ditampilkan (memang publik).
+
+### 26.6 Dependency (yang mungkin perlu ditambah)
+- **`ssh-key`** sebagai **dep langsung** dengan feature keygen — **versi disamakan** dengan yang dipakai `russh` 0.62 (hindari mismatch tipe), feature kira-kira `["ed25519","rsa","encryption","getrandom"]`. *(russh sudah menarik `ssh-key`, tapi feature random/encryption mungkin belum aktif → aktifkan lewat dep langsung.)*
+- **`rand_core`/`OsRng`** (via `rand` atau `getrandom`) untuk sumber acak generate.
+- **`tauri-plugin-dialog`** — **sudah ada** (Fase 23A-2), tak perlu tambah.
+- Verifikasi: `cargo check` normal **dan** `--features msstore` tetap lolos (generate key harus jalan di build Store — `runFullTrust` sudah mengizinkan tulis file).
+- **Alternatif kalau crate rewel:** shell-out ke `ssh-keygen` bila tersedia di PATH — **tidak dipilih** (tak selalu ada di Windows, kalah "in-app"), hanya fallback darurat.
+
+### 26.7 Pentahapan (tiap sub-fase berdiri sendiri & bisa diuji)
+| Sub-fase | Isi | File utama |
+|---|---|---|
+| **26A — Pakai key existing + strip sync** | Browse file key · checkbox+input passphrase (simpan keychain) · kirim passphrase ke backend (utama + jump host) · **strip `keyPath` dari sync + preserve keyPath lokal saat pull (§26.10)**. **Uji: connect pakai key ber-passphrase · push→pull di device lain key kosong** | `ProfileEditor.tsx` · `profiles.ts` · `secrets.ts` · `sync.rs` |
+| **26B — Generate keypair** | Command `ssh_generate_keypair` (Ed25519/RSA, passphrase, chmod 600) · `GenerateKeyModal` · tulis `id_*`+`.pub` · set profil · tampil+Copy public key. **Uji: generate → file muncul → public key valid** | **baru** `keygen.rs` · **baru** `GenerateKeyModal.tsx` · `ProfileEditor.tsx` |
+| **26C — Install ke server (opsional)** | `ssh_install_pubkey` (append idempotent ke `authorized_keys` lewat sesi password) · tombol "Install to server now". **Uji: dari password → install → login berikutnya cukup key** | `ssh.rs`/`keygen.rs` · `GenerateKeyModal.tsx` |
+| **26D — Poles (opsional)** | Multi-method **auto** (publickey→password→keyboard-interactive) · dukung **agent**/**interactive** (varian `SshAuth` baru) · validasi/format public key · indikator "key ✓ terbaca" | `ssh.rs` · `ProfileEditor.tsx` |
+
+> Titik henti MVP terasa lengkap: **akhir 26B** (pakai key + generate). 26C/26D nilai tambah.
+
+### 26.8 Sentuhan file (ringkas)
+| File | Aksi |
+|---|---|
+| `src/components/ProfileEditor.tsx` | edit — Browse · passphrase · tombol Generate |
+| `src/components/GenerateKeyModal.tsx` | **baru** — form generate + hasil public key |
+| `src/profiles.ts` | edit — kirim passphrase (buang `null`), utama + jump host |
+| `src/secrets.ts` | edit(opsional) — helper id passphrase |
+| `src-tauri/src/keygen.rs` | **baru** — `ssh_generate_keypair` (+`ssh_install_pubkey` 26C) |
+| `src-tauri/src/ssh.rs` | edit(hanya 26C/26D) — install pubkey / varian auth baru |
+| `src-tauri/Cargo.toml` | edit — dep `ssh-key` (feature keygen) + `rand` |
+| `src-tauri/src/lib.rs` | edit — registrasi command baru di `generate_handler!` |
+
+**Perlu disentuh untuk §26.10:** `src-tauri/src/sync.rs` (strip `ssh.keyPath` saat export + preserve keyPath lokal saat import). **Tidak perlu:** ubah server · migrasi data (field `keyPath` sudah ada; passphrase di keychain).
+
+### 26.9 Risiko & mitigasi
+| Risiko | Mitigasi |
+|---|---|
+| Versi `ssh-key` beda dgn yg dipakai `russh` → mismatch tipe saat compile | Samakan versi persis ke transitive `russh` 0.62; kunci di `Cargo.lock`; kalau tetap rewel → fallback shell `ssh-keygen` |
+| Path key beda antar-komputer (drive/OS beda) | **Diselesaikan oleh keputusan §26.10**: `keyPath` tak disync → tiap device setup key sendiri, tak ada path nyasar |
+| Key ter-upload ke cloud tanpa sengaja (bocor rahasia) | `keyPath`/passphrase di-strip dari payload sync (§26.10); private key = file lokal, tak pernah masuk store |
+| Generate/encrypt gagal di build Store (sandbox MSIX) | `runFullTrust` sudah aktif (Fase 25); uji tulis `~/.ssh` + generate di paket MSIX (masuk checklist §25.8) |
+| Permission private key longgar di Windows (tak ada chmod) | Andalkan ACL profil user; dokumentasikan; unix tetap 0600 |
+| Passphrase bocor ke store/log | Simpan hanya di keychain/vault; input `type=password`; jangan pernah `console.log` |
+| Install-to-server (26C) menduplikasi baris di `authorized_keys` | Perintah idempotent: `grep -q` dulu sebelum append |
+
+### 26.10 Penyimpanan & sync key — key tidak masuk akun ✅ (keputusan user 2026-08-26)
+**Prinsip:** private key & passphrase = **rahasia per-device**, tak pernah diunggah ke akun/cloud. Hanya **profil** yang tersync. Reconnect di device lain → **setup ulang** key.
+
+- **Lapisan penyimpanan:**
+  - **Private key** — file di disk device itu (mis. `~/.ssh/id_ed25519`). Tak pernah masuk store/cloud.
+  - **`keyPath`** — persist **lokal** di `moorix.json` (bagian `SshOptions`) supaya reconnect di **device yang sama** tak perlu ulang, **tetapi di-strip** saat export sync (tak ikut ke Drive).
+  - **Passphrase** — OS keychain / vault (id `"<profileId>#keyPassphrase"`), lokal; tidak disync sebagai plaintext. (Konsisten dgn password profil yang juga di keychain.)
+  - **Profil (metadata)** — host/port/username/nama/`authMethod`/ports/ciphers/dll → **tetap disync** seperti sekarang.
+- **Mekanisme strip (di `sync.rs`)** — `LOCAL_ONLY_KEYS` tak cukup (itu per **key top-level** store; `keyPath` ada **di dalam** array `userProfiles`). Jadi perlu penanganan per-field khusus key `"userProfiles"`, mirip pola merge Notes (§24.3):
+  - **Export (`get_sync_payload`)** — untuk tiap profil di `userProfiles`, set `ssh.keyPath = ""` di salinan payload sebelum dienkripsi/upload. (Password sudah tak di store — di keychain.)
+  - **Import/pull (`apply_sync_payload`)** — saat menerima `userProfiles` remote, **pertahankan `keyPath` lokal** untuk profil dgn `id` yang sama (jangan timpa jadi kosong). Profil **baru** dari device lain → `keyPath` kosong → user setup ulang. Ini mencegah pull menghapus binding key yang sudah dipasang lokal.
+- **Efek yang diharapkan (uji):** (a) Device A pasang key → reconnect setelah restart **tanpa** ulang. (b) Push dari A → Pull di B → profil muncul di B **tanpa** key → B Browse/Generate key sendiri. (c) Blob Drive **tak** memuat `keyPath`/passphrase (verifikasi: dump payload sebelum upload).
+- **`authMethod` tetap disync** — di device baru profil bisa tampil sebagai "Key" tapi `keyPath` kosong → UI beri **hint** "Key belum dipasang di perangkat ini — Browse atau Generate".
+
+**Status:** rancangan (diskusi user 2026-08-25, penyimpanan/sync dikunci 2026-08-26). Implementasi belum mulai. Urutan disarankan: **26A → 26B** (MVP; 26A sudah termasuk strip sync §26.10), lalu 26C/26D bila diinginkan.
