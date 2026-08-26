@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod forward;
+mod keygen;
 mod cloud_auth;
 mod localfs;
 #[cfg(desktop)]
@@ -193,6 +194,7 @@ pub fn run() {
             commands::host_key_decision,
             ssh::trust_host_key,
             ssh::forget_host_key,
+            keygen::ssh_generate_keypair,
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,

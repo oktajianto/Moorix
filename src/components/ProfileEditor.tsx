@@ -36,6 +36,7 @@ import {
   type DbEngine,
 } from "../db";
 import { getTheme, THEME_NAMES } from "../themes";
+import { GenerateKeyModal } from "./GenerateKeyModal";
 
 type TabId = "general" | "ports" | "databases" | "advanced" | "ciphers" | "colors" | "login" | "input";
 
@@ -300,6 +301,7 @@ function GeneralTab({
   setSsh: (patch: Partial<SshOptions>) => void;
 }) {
   const s = p.ssh;
+  const [showGenKey, setShowGenKey] = useState(false);
   return (
     <div className="max-w-2xl">
       <div className="mb-4 flex gap-3">
@@ -414,7 +416,26 @@ function GeneralTab({
               to keep it unchanged.
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowGenKey(true)}
+            className="mt-3 flex items-center gap-1 rounded px-2 py-1 text-xs"
+            style={{ border: "1px solid var(--m-border)", color: "var(--m-text)" }}
+          >
+            <KeyRound size={14} /> Generate key…
+          </button>
         </div>
+      )}
+
+      {showGenKey && (
+        <GenerateKeyModal
+          defaultComment={`${s.username || "user"}@${s.host || "host"}`}
+          onCancel={() => setShowGenKey(false)}
+          onGenerated={(keyPath, passphrase) =>
+            setSsh({ keyPath, authMethod: "key", keyPassphrase: passphrase })
+          }
+        />
       )}
     </div>
   );

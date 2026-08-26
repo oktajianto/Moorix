@@ -3032,6 +3032,7 @@ dependencies = [
  "mysql_async",
  "pbkdf2 0.12.2",
  "portable-pty",
+ "rand_core 0.10.1",
  "reqwest",
  "russh",
  "russh-sftp",
