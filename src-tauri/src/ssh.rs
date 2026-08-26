@@ -61,11 +61,28 @@ pub struct CipherPrefs {
     compression: Vec<String>,
 }
 
+/// A key candidate for the `Auto` method: a private key path plus an optional
+/// passphrase, tried before falling back to the password.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoKey {
+    path: String,
+    passphrase: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SshAuth {
     Password { password: String },
     Key { path: String, passphrase: Option<String> },
+    /// "Auto": try the key (if any) first, then the password — all on the same
+    /// connection, the way a normal SSH client negotiates methods (Fase 26D-1).
+    Auto {
+        #[serde(default)]
+        key: Option<AutoKey>,
+        #[serde(default)]
+        password: Option<String>,
+    },
 }
 
 /// Messages the IO task consumes: user input and terminal resizes.
@@ -181,6 +198,37 @@ impl SshSession {
                     )
                     .await
                     .map_err(|e| format!("auth error: {e}"))?
+            }
+            SshAuth::Auto { key, password } => {
+                // Try public-key first when a usable key is configured, then fall
+                // back to the password — both on the same connection (26D-1). A
+                // key that fails to load is skipped rather than fatal, so the
+                // password still gets a turn.
+                let mut result: Option<AuthResult> = None;
+                if let Some(k) = key {
+                    if let Ok(loaded) = load_secret_key(&k.path, k.passphrase.as_deref()) {
+                        let r = handle
+                            .authenticate_publickey(
+                                cfg.username.clone(),
+                                PrivateKeyWithHashAlg::new(Arc::new(loaded), None),
+                            )
+                            .await
+                            .map_err(|e| format!("auth error: {e}"))?;
+                        if matches!(r, AuthResult::Success) {
+                            result = Some(r);
+                        }
+                    }
+                }
+                if result.is_none() {
+                    if let Some(pw) = password {
+                        let r = handle
+                            .authenticate_password(cfg.username.clone(), pw.clone())
+                            .await
+                            .map_err(|e| format!("auth error: {e}"))?;
+                        result = Some(r);
+                    }
+                }
+                result.ok_or_else(|| "no authentication method available".to_string())?
             }
         };
 

@@ -354,6 +354,17 @@ export function sshOpenFromProfile(p: UserProfile): OpenSession {
       const passphrase =
         (await secretGet(keyPassphraseId(p.id)).catch(() => null)) || null;
       auth = { type: "key", path: s.keyPath, passphrase };
+    } else if (s.authMethod === "auto") {
+      // Try the key (when one is set) then the password, negotiated on a single
+      // connection by the backend (Fase 26D-1).
+      const password = (await secretGet(p.id).catch(() => null)) ?? s.password ?? "";
+      let key: Record<string, unknown> | null = null;
+      if (s.keyPath) {
+        const passphrase =
+          (await secretGet(keyPassphraseId(p.id)).catch(() => null)) || null;
+        key = { path: s.keyPath, passphrase };
+      }
+      auth = { type: "auto", key, password: password || null };
     } else {
       const stored = await secretGet(p.id).catch(() => null);
       auth = { type: "password", password: stored ?? s.password ?? "" };
